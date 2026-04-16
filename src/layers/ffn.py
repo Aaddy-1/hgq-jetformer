@@ -9,7 +9,13 @@ class HGQFeedForward(keras.layers.Layer):
     """
 
     def __init__(
-        self, in_dim, multiplication=2, activation="silu", quantize=True, **kwargs
+        self,
+        in_dim,
+        multiplication=2,
+        activation="silu",
+        normalization="Layer",
+        quantize=True,
+        **kwargs
     ):
         super().__init__(**kwargs)
         self.in_dim = in_dim
@@ -22,11 +28,17 @@ class HGQFeedForward(keras.layers.Layer):
         # Determine whether to use quantized or standard dense layers
         dense_cls = QDense if quantize else keras.layers.Dense
 
+        def get_norm(name):
+            if normalization == "Batch":
+                return keras.layers.BatchNormalization(axis=-1, name=name)
+            else:
+                return keras.layers.LayerNormalization(axis=-1, name=name)
+
         # Layer Definitions based on the nn.Sequential reference
-        self.norm1 = keras.layers.LayerNormalization(axis=-1, name="ffn_norm1")
+        self.norm1 = get_norm("ffn_norm1")
         self.dense1 = dense_cls(hidden_dim, use_bias=False, name="ffn_expand")
 
-        self.norm2 = keras.layers.LayerNormalization(axis=-1, name="ffn_norm2")
+        self.norm2 = get_norm("ffn_norm2")
         self.dense2 = dense_cls(in_dim, use_bias=False, name="ffn_contract")
 
         # Activation (Keras 'silu' is equivalent to torch.nn.SiLU)
