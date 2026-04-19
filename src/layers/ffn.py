@@ -2,6 +2,7 @@ import keras
 from hgq.layers import QDense
 
 
+@keras.saving.register_keras_serializable()
 class HGQFeedForward(keras.layers.Layer):
     """
     Position-wise feed-forward layer with HGQ2 integration.
@@ -20,6 +21,8 @@ class HGQFeedForward(keras.layers.Layer):
         super().__init__(**kwargs)
         self.in_dim = in_dim
         self.multiplication = multiplication
+        self.activation = activation
+        self.normalization = normalization
         self.quantize = quantize
 
         # Internal dimension: expansion factor
@@ -58,3 +61,16 @@ class HGQFeedForward(keras.layers.Layer):
         x = self.dense2(x)
 
         return x
+
+    def get_config(self):
+        config = super().get_config()
+        config.update(
+            {
+                "in_dim": self.in_dim,
+                "multiplication": self.multiplication,
+                "activation": self.activation,
+                "normalization": self.normalization,
+                "quantize": self.quantize,
+            }
+        )
+        return config
