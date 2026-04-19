@@ -42,7 +42,7 @@ class HGQFeedForward(keras.layers.Layer):
         self.dense2 = dense_cls(in_dim, use_bias=False, name="ffn_contract")
 
         # Activation (Keras 'silu' is equivalent to torch.nn.SiLU)
-        self.activation_fn = keras.activations.get(activation)
+        self.activation_fn = keras.activations.get(activation.lower())
 
     def call(self, x, training=False):
         # x shape: (batch, seq_len, in_dim)
