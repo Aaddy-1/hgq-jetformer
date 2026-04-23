@@ -35,12 +35,31 @@ class HGQSelfAttention(keras.layers.Layer):
         # Jetformer uses bias=False for Q, K, V
         dense_cls = QDense if quantize else keras.layers.Dense
 
-        self.q_proj = dense_cls(self.latent_dim, use_bias=False, name="query")
-        self.k_proj = dense_cls(self.latent_dim, use_bias=False, name="key")
-        self.v_proj = dense_cls(self.latent_dim, use_bias=False, name="value")
+        self.q_proj = dense_cls(
+            self.latent_dim,
+            use_bias=False,
+            kernel_initializer="he_uniform",
+            name="query",
+        )
+        self.k_proj = dense_cls(
+            self.latent_dim, use_bias=False, kernel_initializer="he_uniform", name="key"
+        )
+        self.v_proj = dense_cls(
+            self.latent_dim,
+            use_bias=False,
+            kernel_initializer="he_uniform",
+            name="value",
+        )
 
         # 3. Output Projection (Uses bias by default in PyTorch)
-        self.out_proj = dense_cls(self.in_dim, name="output")
+        self.out_proj = dense_cls(
+            self.in_dim,
+            kernel_initializer="he_uniform",
+            bias_initializer=keras.initializers.VarianceScaling(
+                scale=1 / 3, mode="fan_in", distribution="uniform"
+            ),
+            name="output",
+        )
 
         # 4. Attention Softmax
         # Using QSoftmax ensures bit-accuracy if the library requires it

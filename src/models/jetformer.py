@@ -70,7 +70,7 @@ class HGQJetFormer(keras.Model):
         self.cls_token = self.add_weight(
             name="cls_token",
             shape=(1, 1, self.embed_dim),
-            initializer="random_normal",
+            initializer=keras.initializers.RandomNormal(mean=0.0, stddev=1.0),
             trainable=True,
         )
         super().build(input_shape)
