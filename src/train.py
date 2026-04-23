@@ -9,6 +9,13 @@ import keras
 from src.dataset import JetFormerDataGenerator
 from src.models.jetformer import HGQJetFormer
 
+# Route Keras to the installed backend
+os.environ["KERAS_BACKEND"] = "jax"  # or "tensorflow"
+
+# If using JAX: Prevent the backend from pre-allocating 100% of VRAM,
+# which can crash out-of-core data loaders.
+os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.90"
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 PROCESSED_DIR = os.path.join(DATA_DIR, "processed")
