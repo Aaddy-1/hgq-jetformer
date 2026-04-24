@@ -4,12 +4,17 @@ import os
 import time
 from tqdm import tqdm
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+import os
 
-# Data PATH
-DATA_DIR = os.path.join(BASE_DIR, "data")
+# Resolves to the 'src' directory
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Steps up one level to the project root
+PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
+
+# Data PATH mapped to the root
+DATA_DIR = os.path.join(PROJECT_ROOT, "data")
 PROCESSED_DIR = os.path.join(DATA_DIR, "processed")
-
 
 def _read_h5_files(name="train", batch_size=5000):
     if name == "train":
