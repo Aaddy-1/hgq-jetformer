@@ -1,4 +1,12 @@
 import os
+
+# Route Keras to the installed backend
+os.environ["KERAS_BACKEND"] = "jax"  # or "tensorflow"
+
+# If using JAX: Prevent the backend from pre-allocating 100% of VRAM,
+# which can crash out-of-core data loaders.
+os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.90"
+
 import argparse
 import numpy as np
 import matplotlib.pyplot as plt
@@ -9,18 +17,20 @@ import keras
 from src.dataset import JetFormerDataGenerator
 from src.models.jetformer import HGQJetFormer
 
-# Route Keras to the installed backend
-os.environ["KERAS_BACKEND"] = "jax"  # or "tensorflow"
 
-# If using JAX: Prevent the backend from pre-allocating 100% of VRAM,
-# which can crash out-of-core data loaders.
-os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.90"
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.path.join(BASE_DIR, "data")
+# Resolves to the 'src' directory
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Steps up one level to the project root
+PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
+
+# Map target directories to the root
+DATA_DIR = os.path.join(PROJECT_ROOT, "data")
 PROCESSED_DIR = os.path.join(DATA_DIR, "processed")
-MODEL_DIR = os.path.join(BASE_DIR, "models")
-OUTPUT_DIR = os.path.join(BASE_DIR, "outputs")
+MODEL_DIR = os.path.join(PROJECT_ROOT, "models")
+OUTPUT_DIR = os.path.join(PROJECT_ROOT, "outputs")
+
 os.makedirs(MODEL_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -32,15 +42,12 @@ def build_lr_schedule(max_lr, total_steps, pct_start=0.2):
     warmup_steps = int(total_steps * pct_start)
     decay_steps = total_steps - warmup_steps
 
-    decay_schedule = keras.optimizers.schedules.CosineDecay(
-        initial_learning_rate=max_lr, decay_steps=decay_steps, alpha=1e-4
-    )
-
-    return keras.optimizers.schedules.WarmUp(
-        initial_learning_rate=max_lr / 25.0,
-        decay_schedule_fn=decay_schedule,
-        warmup_steps=warmup_steps,
-        warmup_learning_rate=max_lr,
+    return keras.optimizers.schedules.CosineDecay(
+        initial_learning_rate=max_lr / 25.0,  # Starting point of the linear warmup
+        decay_steps=decay_steps,
+        alpha=1e-4,                           # Final LR as a fraction of warmup_target
+        warmup_target=max_lr,                 # Peak LR achieved at the end of warmup
+        warmup_steps=warmup_steps
     )
 
 
@@ -192,6 +199,12 @@ def train(
         normalization=normalization,
         quantize=False,
     )
+
+    dummy_tensor = keras.ops.zeros((1, num_particles, num_feats))
+    model(dummy_tensor)
+
+    # Output the fully instantiated architectural footprint
+    model.summary()
 
     model.compile(
         optimizer=optimizer,
