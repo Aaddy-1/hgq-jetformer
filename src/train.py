@@ -18,7 +18,6 @@ from src.dataset import JetFormerDataGenerator
 from src.models.jetformer import HGQJetFormer
 
 
-
 # Resolves to the 'src' directory
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -45,9 +44,9 @@ def build_lr_schedule(max_lr, total_steps, pct_start=0.2):
     return keras.optimizers.schedules.CosineDecay(
         initial_learning_rate=max_lr / 25.0,  # Starting point of the linear warmup
         decay_steps=decay_steps,
-        alpha=1e-4,                           # Final LR as a fraction of warmup_target
-        warmup_target=max_lr,                 # Peak LR achieved at the end of warmup
-        warmup_steps=warmup_steps
+        alpha=1e-4,  # Final LR as a fraction of warmup_target
+        warmup_target=max_lr,  # Peak LR achieved at the end of warmup
+        warmup_steps=warmup_steps,
     )
 
 
@@ -208,7 +207,7 @@ def train(
 
     model.compile(
         optimizer=optimizer,
-        loss=keras.losses.SparseCategoricalCrossentropy(from_logits=False),
+        loss=keras.losses.SparseCategoricalCrossentropy(from_logits=True),
         metrics=["sparse_categorical_accuracy"],
     )
 
