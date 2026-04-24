@@ -13,7 +13,7 @@ class HGQFeedForward(keras.layers.Layer):
         self,
         in_dim,
         multiplication=2,
-        activation="relu",
+        activation="ReLU",
         normalization="Layer",
         quantize=True,
         **kwargs

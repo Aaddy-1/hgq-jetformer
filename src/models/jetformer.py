@@ -98,5 +98,5 @@ class HGQJetFormer(keras.Model):
         cls_out = self.final_norm(cls_out, training=training)
         logits = self.classifier(cls_out)
 
-        # Step 6: Log Softmax for Jet classification
-        return ops.log_softmax(logits, axis=-1)
+        # Step 6: Return raw logitcs (Softmax will be applied in loss function)
+        return logits
