@@ -13,6 +13,7 @@ class HGQTransformerBlock(keras.layers.Layer):
         num_particles=30,
         activation="ReLU",
         normalization="Layer",
+        momentum=0.9,
         quantize=True,
         **kwargs
     ):
@@ -25,6 +26,7 @@ class HGQTransformerBlock(keras.layers.Layer):
             num_heads=num_heads,
             num_particles=num_particles,
             normalization=normalization,
+            momentum=momentum,
             quantize=quantize,
         )
 
@@ -34,6 +36,7 @@ class HGQTransformerBlock(keras.layers.Layer):
             multiplication=2,
             activation=activation,
             normalization=normalization,
+            momentum=momentum,
             quantize=quantize,
         )
 

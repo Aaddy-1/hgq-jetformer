@@ -15,6 +15,7 @@ class HGQFeedForward(keras.layers.Layer):
         multiplication=2,
         activation="ReLU",
         normalization="Layer",
+        momentum=0.9,
         quantize=True,
         **kwargs
     ):
@@ -23,6 +24,7 @@ class HGQFeedForward(keras.layers.Layer):
         self.multiplication = multiplication
         self.activation = activation
         self.normalization = normalization
+        self.momentum = momentum
         self.quantize = quantize
 
         # Internal dimension: expansion factor
@@ -33,7 +35,9 @@ class HGQFeedForward(keras.layers.Layer):
 
         def get_norm(name):
             if normalization == "Batch":
-                return keras.layers.BatchNormalization(axis=-1, name=name)
+                return keras.layers.BatchNormalization(
+                    axis=-1, name=name, momentum=momentum
+                )
             else:
                 return keras.layers.LayerNormalization(axis=-1, name=name)
 
@@ -77,6 +81,7 @@ class HGQFeedForward(keras.layers.Layer):
                 "multiplication": self.multiplication,
                 "activation": self.activation,
                 "normalization": self.normalization,
+                "momentum": self.momentum,
                 "quantize": self.quantize,
             }
         )
