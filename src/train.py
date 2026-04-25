@@ -16,6 +16,7 @@ import keras
 # Relative imports
 from src.dataset import JetFormerDataGenerator
 from src.models.jetformer import HGQJetFormer
+from src.onecyclelr import OneCycleLR
 
 
 # Resolves to the 'src' directory
@@ -38,15 +39,13 @@ CLASSES = ["Gluon", "Light_quarks", "W_boson", "Z_boson", "Top_quark"]
 
 
 def build_lr_schedule(max_lr, total_steps, pct_start=0.2):
-    warmup_steps = int(total_steps * pct_start)
-    decay_steps = total_steps - warmup_steps
-
-    return keras.optimizers.schedules.CosineDecay(
-        initial_learning_rate=max_lr / 25.0,  # Starting point of the linear warmup
-        decay_steps=decay_steps,
-        alpha=1e-4,  # Final LR as a fraction of warmup_target
-        warmup_target=max_lr,  # Peak LR achieved at the end of warmup
-        warmup_steps=warmup_steps,
+    # PyTorch OneCycleLR defaults: div_factor=25.0, final_div_factor=1e4
+    return OneCycleLR(
+        max_lr=max_lr,
+        total_steps=total_steps,
+        pct_start=pct_start,
+        div_factor=25.0,
+        final_div_factor=1e4
     )
 
 
