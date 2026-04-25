@@ -45,7 +45,7 @@ def build_lr_schedule(max_lr, total_steps, pct_start=0.2):
         total_steps=total_steps,
         pct_start=pct_start,
         div_factor=25.0,
-        final_div_factor=1e4
+        final_div_factor=1e4,
     )
 
 
@@ -261,4 +261,11 @@ def train(
 
 
 if __name__ == "__main__":
-    train(num_particles=150, num_feats=16)
+    train(
+        num_particles=8,
+        num_feats=3,
+        num_epochs=25,
+        batch_size=256,
+        early_stopping_patience=0,  # Disable to allow OneCycleLR decay
+        val_ratio=0.1,
+    )

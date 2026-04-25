@@ -33,10 +33,14 @@ class HGQFeedForward(keras.layers.Layer):
         # Determine whether to use quantized or standard dense layers
         dense_cls = QDense if quantize else keras.layers.Dense
 
+        self.parity_initializer = keras.initializers.VarianceScaling(
+            scale=1 / 3, mode="fan_in", distribution="uniform"
+        )
+
         def get_norm(name):
             if normalization == "Batch":
                 return keras.layers.BatchNormalization(
-                    axis=-1, name=name, momentum=momentum
+                    axis=-1, name=name, momentum=momentum, epsilon=1e-5
                 )
             else:
                 return keras.layers.LayerNormalization(axis=-1, name=name)
@@ -46,13 +50,16 @@ class HGQFeedForward(keras.layers.Layer):
         self.dense1 = dense_cls(
             hidden_dim,
             use_bias=False,
-            kernel_initializer="he_uniform",
+            kernel_initializer=self.parity_initializer,
             name="ffn_expand",
         )
 
         self.norm2 = get_norm("ffn_norm2")
         self.dense2 = dense_cls(
-            in_dim, use_bias=False, kernel_initializer="he_uniform", name="ffn_contract"
+            in_dim,
+            use_bias=False,
+            kernel_initializer=self.parity_initializer,
+            name="ffn_contract",
         )
 
         # Activation (Keras 'silu' is equivalent to torch.nn.SiLU)
