@@ -24,10 +24,16 @@ class HGQSelfAttention(keras.layers.Layer):
         self.momentum = momentum
         self.num_particles = num_particles
         self.quantize = quantize
+        # This is exactly how weights are initialized in Pytorch's nn.Linear by default
+        self.parity_initializer = keras.initializers.VarianceScaling(
+            scale=1 / 3, mode="fan_in", distribution="uniform"
+        )
 
         # 1. Normalization Selection
         if self.normalization == "Batch":
-            self.norm = keras.layers.BatchNormalization(axis=-1, momentum=momentum)
+            self.norm = keras.layers.BatchNormalization(
+                axis=-1, momentum=momentum, epsilon=1e-5
+            )
         elif self.normalization == "Layer":
             self.norm = keras.layers.LayerNormalization(axis=-1)
         else:
@@ -40,26 +46,27 @@ class HGQSelfAttention(keras.layers.Layer):
         self.q_proj = dense_cls(
             self.latent_dim,
             use_bias=False,
-            kernel_initializer="he_uniform",
+            kernel_initializer=self.parity_initializer,
             name="query",
         )
         self.k_proj = dense_cls(
-            self.latent_dim, use_bias=False, kernel_initializer="he_uniform", name="key"
+            self.latent_dim,
+            use_bias=False,
+            kernel_initializer=self.parity_initializer,
+            name="key",
         )
         self.v_proj = dense_cls(
             self.latent_dim,
             use_bias=False,
-            kernel_initializer="he_uniform",
+            kernel_initializer=self.parity_initializer,
             name="value",
         )
 
         # 3. Output Projection (Uses bias by default in PyTorch)
         self.out_proj = dense_cls(
             self.in_dim,
-            kernel_initializer="he_uniform",
-            bias_initializer=keras.initializers.VarianceScaling(
-                scale=1 / 3, mode="fan_in", distribution="uniform"
-            ),
+            kernel_initializer=self.parity_initializer,
+            bias_initializer=self.parity_initializer,
             name="output",
         )
 

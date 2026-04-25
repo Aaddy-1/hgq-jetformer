@@ -19,7 +19,6 @@ class HGQJetFormer(keras.Model):
         num_particles=30,
         activation="ReLU",
         normalization="Batch",
-        momentum=0.9,
         quantize=True,
         **kwargs,
     ):
@@ -42,7 +41,6 @@ class HGQJetFormer(keras.Model):
                 num_particles=num_particles,
                 activation=activation,
                 normalization=normalization,
-                momentum=momentum,
                 quantize=quantize,
                 name=f"transformer_block_{i}",
             )
@@ -52,7 +50,7 @@ class HGQJetFormer(keras.Model):
         # 3. Final Normalization (Applied to CLS token output)
         if self.normalization == "Batch":
             self.final_norm = keras.layers.BatchNormalization(
-                axis=-1, name="final_norm", momentum=momentum
+                axis=-1, name="final_norm", momentum=0.9, epsilon=1e-5
             )
         elif self.normalization == "Layer":
             self.final_norm = keras.layers.LayerNormalization(
@@ -60,12 +58,20 @@ class HGQJetFormer(keras.Model):
             )
         else:
             self.final_norm = keras.layers.BatchNormalization(
-                axis=-1, name="final_norm", momentum=momentum
+                axis=-1, name="final_norm", momentum=0.9, epsilon=1e-5
             )
+
+        self.parity_initializer = keras.initializers.VarianceScaling(
+            scale=1 / 3, mode="fan_in", distribution="uniform"
+        )
 
         # 4. Classification Head
         dense_cls = QDense if quantize else keras.layers.Dense
-        self.classifier = dense_cls(num_classes, name="classifier_head")
+        self.classifier = dense_cls(
+            num_classes,
+            kernel_initializer=self.parity_initializer,
+            name="classifier_head",
+        )
 
     def build(self, input_shape):
         # Initialize the learned CLS token: (1, 1, embed_dim)
@@ -100,5 +106,5 @@ class HGQJetFormer(keras.Model):
         cls_out = self.final_norm(cls_out, training=training)
         logits = self.classifier(cls_out)
 
-        # Step 6: Return raw logitcs (Softmax will be applied in loss function)
+        # Step 6: Return raw logits (Softmax will be applied in loss function)
         return logits

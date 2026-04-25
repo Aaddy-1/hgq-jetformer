@@ -14,15 +14,17 @@ class HGQEmbedding(keras.layers.Layer):
         self.embedding_dim = embedding_dim
         self.quantize = quantize
 
+        self.parity_initializer = keras.initializers.VarianceScaling(
+            scale=1 / 3, mode="fan_in", distribution="uniform"
+        )
+
         dense_cls = QDense if quantize else keras.layers.Dense
 
         self.dense_embedding = dense_cls(
             embedding_dim,
-            kernel_initializer="he_uniform",
+            kernel_initializer=self.parity_initializer,
             # Replicates PyTorch's default uniform bias initialization
-            bias_initializer=keras.initializers.VarianceScaling(
-                scale=1 / 3, mode="fan_in", distribution="uniform"
-            ),
+            bias_initializer=self.parity_initializer,
             name="embedding_projection",
         )
 

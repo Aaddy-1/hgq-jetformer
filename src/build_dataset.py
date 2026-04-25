@@ -16,6 +16,7 @@ PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
 DATA_DIR = os.path.join(PROJECT_ROOT, "data")
 PROCESSED_DIR = os.path.join(DATA_DIR, "processed")
 
+
 def _read_h5_files(name="train", batch_size=5000):
     if name == "train":
         input_path = os.path.join(DATA_DIR, "train")
@@ -294,15 +295,14 @@ def compute_and_save_welford_stats(num_particles, num_feats, batch_size=5000):
 
 
 if __name__ == "__main__":
-    # The reference paper evaluates the 150-particle baseline using all 16 features.
-    target_particles = 150
-    target_feats = list(range(16))
+    target_particles = 8
+    target_feats = [5, 8, 11]  # 3-feature subset
 
     # 1. Structural Preprocessing
     customize_dataset(num_particles=target_particles, feats=target_feats, name="train")
     customize_dataset(num_particles=target_particles, feats=target_feats, name="test")
 
-    # 2. Statistical Preprocessing (Executing solely on the training split to prevent data leakage)
+    # 2. Statistical Preprocessing
     compute_and_save_welford_stats(
         num_particles=target_particles, num_feats=len(target_feats)
     )
