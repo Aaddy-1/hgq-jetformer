@@ -161,7 +161,7 @@ def train(
     do_train: bool = True,
     val_ratio: float = 0.1,
     num_epochs: int = 25,
-    early_stopping_patience: int = 4,
+    early_stopping_patience: int = 0,
     num_transformers: int = 3,
     embbed_dim: int = 64,
     num_heads: int = 2,
