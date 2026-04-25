@@ -19,6 +19,7 @@ class HGQJetFormer(keras.Model):
         num_particles=30,
         activation="ReLU",
         normalization="Batch",
+        momentum=0.9,
         quantize=True,
         **kwargs,
     ):
@@ -41,6 +42,7 @@ class HGQJetFormer(keras.Model):
                 num_particles=num_particles,
                 activation=activation,
                 normalization=normalization,
+                momentum=momentum,
                 quantize=quantize,
                 name=f"transformer_block_{i}",
             )
@@ -50,7 +52,7 @@ class HGQJetFormer(keras.Model):
         # 3. Final Normalization (Applied to CLS token output)
         if self.normalization == "Batch":
             self.final_norm = keras.layers.BatchNormalization(
-                axis=-1, name="final_norm"
+                axis=-1, name="final_norm", momentum=momentum
             )
         elif self.normalization == "Layer":
             self.final_norm = keras.layers.LayerNormalization(
@@ -58,7 +60,7 @@ class HGQJetFormer(keras.Model):
             )
         else:
             self.final_norm = keras.layers.BatchNormalization(
-                axis=-1, name="final_norm"
+                axis=-1, name="final_norm", momentum=momentum
             )
 
         # 4. Classification Head

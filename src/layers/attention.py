@@ -11,6 +11,7 @@ class HGQSelfAttention(keras.layers.Layer):
         num_heads=1,
         num_particles=30,
         normalization="Layer",
+        momentum=0.9,
         quantize=True,
         **kwargs
     ):
@@ -20,12 +21,13 @@ class HGQSelfAttention(keras.layers.Layer):
         self.num_heads = num_heads
         self.head_dim = self.latent_dim // num_heads
         self.normalization = normalization
+        self.momentum = momentum
         self.num_particles = num_particles
         self.quantize = quantize
 
         # 1. Normalization Selection
         if self.normalization == "Batch":
-            self.norm = keras.layers.BatchNormalization(axis=-1)
+            self.norm = keras.layers.BatchNormalization(axis=-1, momentum=momentum)
         elif self.normalization == "Layer":
             self.norm = keras.layers.LayerNormalization(axis=-1)
         else:
