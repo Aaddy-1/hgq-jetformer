@@ -161,7 +161,7 @@ def train(
     do_train: bool = True,
     val_ratio: float = 0.1,
     num_epochs: int = 25,
-    early_stopping_patience: int = 4,
+    early_stopping_patience: int = 0,
     num_transformers: int = 3,
     embbed_dim: int = 64,
     num_heads: int = 2,
@@ -261,4 +261,9 @@ def train(
 
 
 if __name__ == "__main__":
-    train(num_particles=150, num_feats=16)
+    train(
+        num_particles=150, 
+        num_feats=16,
+        num_epochs=25,
+        early_stopping_patience=0  # Disables early stopping
+    )
