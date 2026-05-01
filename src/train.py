@@ -192,6 +192,7 @@ def train(
     model_path: str = None,
     plot_path: str = None,
     output_path: str = None,
+    experiment: str = None,
 ):
     train_gen, val_gen, test_gen = setup_data_generators(
         num_particles=num_particles,
@@ -199,6 +200,17 @@ def train(
         batch_size=batch_size,
         val_ratio=val_ratio,
     )
+
+    if experiment:
+        exp_root = os.path.join(PROJECT_ROOT, "experiment", experiment)
+        current_model_dir = os.path.join(exp_root, "models")
+        current_output_dir = os.path.join(exp_root, "outputs")
+    else:
+        current_model_dir = MODEL_DIR
+        current_output_dir = OUTPUT_DIR
+
+    os.makedirs(current_model_dir, exist_ok=True)
+    os.makedirs(current_output_dir, exist_ok=True)
 
     total_steps = len(train_gen) * num_epochs
     lr_schedule = build_lr_schedule(max_lr=1e-3, total_steps=total_steps)
@@ -243,7 +255,7 @@ def train(
 
     if save:
         if model_path is None:
-            model_path = os.path.join(MODEL_DIR, f"{num_particles}_{num_feats}f.keras")
+            model_path = os.path.join(current_model_dir, f"{num_particles}_{num_feats}f.keras")
         callbacks.append(
             keras.callbacks.ModelCheckpoint(
                 filepath=model_path, monitor="val_loss", save_best_only=True
@@ -261,14 +273,14 @@ def train(
         if save:
             if output_path is None:
                 output_path = os.path.join(
-                    OUTPUT_DIR, f"{num_particles}_{num_feats}f_loss_acc.npz"
+                    current_output_dir, f"{num_particles}_{num_feats}f_loss_acc.npz"
                 )
             if plot_path is None:
                 plot_path = os.path.join(
-                    OUTPUT_DIR, f"{num_particles}_{num_feats}f_plot.png"
+                    current_output_dir, f"{num_particles}_{num_feats}f_plot.png"
                 )
             
-            eval_results_path = os.path.join(OUTPUT_DIR, f"fixed_act_func_{num_particles}_{num_feats}f_metrics.json")
+            eval_results_path = os.path.join(current_output_dir, f"fixed_act_func_{num_particles}_{num_feats}f_metrics.json")
 
             save_loss_acc(history.history, num_particles, num_feats, output_path)
             plot_loss_acc(history.history, num_particles, num_feats, plot_path)
@@ -306,6 +318,7 @@ if __name__ == "__main__":
     parser.add_argument("--num_feats", type=int, default=3, choices=[3, 16], help="Number of features per constituent")
     parser.add_argument("--num_epochs", type=int, default=25, help="Total training epochs")
     parser.add_argument("--batch_size", type=int, default=256, help="Training batch size")
+    parser.add_argument("--experiment", type=str, default=None, help="Name of the experiment folder")
     
     args = parser.parse_args()
 
@@ -315,5 +328,6 @@ if __name__ == "__main__":
         num_epochs=args.num_epochs,
         batch_size=args.batch_size,
         early_stopping_patience=6,  # Enforced 0 to allow OneCycleLR decay phase
-        val_ratio=0.1
+        val_ratio=0.1,
+        experiment=args.experiment
     )
