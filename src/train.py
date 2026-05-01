@@ -12,6 +12,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.metrics import accuracy_score, roc_auc_score
 import keras
+import json
 
 # Relative imports
 from src.dataset import JetFormerDataGenerator
@@ -84,6 +85,24 @@ def setup_data_generators(num_particles, num_feats, batch_size, val_ratio=0.1):
     )
 
     return train_gen, val_gen, test_gen
+
+def save_final_evaluation(acc, class_accs, aucs, classes, filepath):
+    """
+    Serializes test set metrics to a JSON file.
+    """
+    results = {
+        "overall_accuracy": float(acc),
+        "per_class_metrics": {}
+    }
+
+    for i, class_name in enumerate(classes):
+        results["per_class_metrics"][class_name] = {
+            "accuracy": float(class_accs[i]) if not np.isnan(class_accs[i]) else None,
+            "auc": float(aucs[i]) if aucs[i] is not None else None
+        }
+
+    with open(filepath, "w") as f:
+        json.dump(results, f, indent=4)
 
 
 def save_loss_acc(history_dict, num_particles, num_feats, output_path):
@@ -183,7 +202,7 @@ def train(
 
     total_steps = len(train_gen) * num_epochs
     lr_schedule = build_lr_schedule(max_lr=1e-3, total_steps=total_steps)
-    optimizer = keras.optimizers.AdamW(learning_rate=lr_schedule, weight_decay=1e-2)
+    optimizer = keras.optimizers.AdamW(learning_rate=lr_schedule, weight_decay=1e-2, global_clipnorm=1.0)
 
     model = HGQJetFormer(
         in_dim=num_feats,
@@ -202,6 +221,7 @@ def train(
     model(dummy_tensor)
 
     # Output the fully instantiated architectural footprint
+    print("=================MODEL SUMMARY=================")
     model.summary()
 
     model.compile(
@@ -232,7 +252,7 @@ def train(
 
     if do_train:
         print(
-            f"Starting training for {num_particles} particles, {num_feats} features..."
+            f"Starting training for {num_particles} particles, {num_feats} features with early stopping {early_stopping_patience}... "
         )
         history = model.fit(
             train_gen, validation_data=val_gen, epochs=num_epochs, callbacks=callbacks
@@ -247,9 +267,16 @@ def train(
                 plot_path = os.path.join(
                     OUTPUT_DIR, f"{num_particles}_{num_feats}f_plot.png"
                 )
+            
+            eval_results_path = os.path.join(OUTPUT_DIR, f"fixed_act_func_{num_particles}_{num_feats}f_metrics.json")
 
             save_loss_acc(history.history, num_particles, num_feats, output_path)
             plot_loss_acc(history.history, num_particles, num_feats, plot_path)
+    
+    print("\nLoading Best Checkpoint Weights...")
+    # Explicitly restore the optimal weights saved by ModelCheckpoint
+    if save and model_path is not None:
+        model.load_weights(model_path)
 
     print("\nExecuting Inference on Test Set...")
     outputs = model.predict(test_gen)
@@ -257,15 +284,36 @@ def train(
     # Extract true labels directly from the un-shuffled generator
     labels = np.concatenate([y for _, y in test_gen], axis=0)
 
+    test_acc, test_class_accs, test_aucs = evaluate(outputs, labels, CLASSES)
+
+    # Persist to disk
+    if save:
+        save_final_evaluation(
+            test_acc, 
+            test_class_accs, 
+            test_aucs, 
+            CLASSES, 
+            eval_results_path
+        )
+        print(f"Final metrics saved to: {eval_results_path}")
+
     evaluate(outputs, labels, CLASSES)
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Train HGQJetFormer")
+    parser.add_argument("--num_particles", type=int, default=8, help="Number of jet constituents")
+    parser.add_argument("--num_feats", type=int, default=3, choices=[3, 16], help="Number of features per constituent")
+    parser.add_argument("--num_epochs", type=int, default=25, help="Total training epochs")
+    parser.add_argument("--batch_size", type=int, default=256, help="Training batch size")
+    
+    args = parser.parse_args()
+
     train(
-        num_particles=8,
-        num_feats=3,
-        num_epochs=25,
-        batch_size=256,
-        early_stopping_patience=0,  # Disable to allow OneCycleLR decay
-        val_ratio=0.1,
+        num_particles=args.num_particles, 
+        num_feats=args.num_feats,
+        num_epochs=args.num_epochs,
+        batch_size=args.batch_size,
+        early_stopping_patience=6,  # Enforced 0 to allow OneCycleLR decay phase
+        val_ratio=0.1
     )

@@ -3,6 +3,7 @@ import h5py
 import os
 import time
 from tqdm import tqdm
+import argparse
 
 import os
 
@@ -293,16 +294,26 @@ def compute_and_save_welford_stats(num_particles, num_feats, batch_size=5000):
     print(f"Saved mean.npy and std.npy to {save_dir}")
     print("Time taken:", time.time() - start_time, "s")
 
-
 if __name__ == "__main__":
-    target_particles = 8
-    target_feats = [5, 8, 11]  # 3-feature subset
+    parser = argparse.ArgumentParser(description="Build HDF5 Dataset for JetFormer")
+    parser.add_argument("--num_particles", type=int, default=8, help="Number of jet constituents to retain")
+    parser.add_argument("--num_feats", type=int, default=3, choices=[3, 16], help="Number of features per constituent")
+    
+    args = parser.parse_args()
+
+    # Map the feature count to the specific kinematic indices
+    if args.num_feats == 3:
+        target_feats = [5, 8, 11]
+    else:
+        target_feats = list(range(16))
+
+    target_particles = args.num_particles
 
     # 1. Structural Preprocessing
     customize_dataset(num_particles=target_particles, feats=target_feats, name="train")
     customize_dataset(num_particles=target_particles, feats=target_feats, name="test")
 
-    # 2. Statistical Preprocessing
+    # 2. Statistical Preprocessing (Executing solely on the training split to prevent data leakage)
     compute_and_save_welford_stats(
         num_particles=target_particles, num_feats=len(target_feats)
     )
