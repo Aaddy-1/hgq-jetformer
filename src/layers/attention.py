@@ -61,6 +61,21 @@ class HGQSelfAttention(keras.layers.Layer):
             kernel_initializer=self.parity_initializer,
             name="value",
         )
+        # Add this after your Q, K, V projections
+        seq_len_with_cls = self.num_particles + 1
+        
+        if self.normalization == "Batch":
+            # axis=1 maps to the flattened seq_len*seq_len dimension
+            self.pre_exp_norm = keras.layers.BatchNormalization(
+                axis=1, momentum=self.momentum, epsilon=1e-5, name="pre_exp_norm"
+            )
+        elif self.normalization == "Layer":
+            self.pre_exp_norm = keras.layers.LayerNormalization(
+                axis=1, name="pre_exp_norm"
+            )
+        else:
+            self.pre_exp_norm = None
+
 
         # 3. Output Projection (Uses bias by default in PyTorch)
         self.out_proj = dense_cls(
@@ -72,7 +87,7 @@ class HGQSelfAttention(keras.layers.Layer):
 
         # 4. Attention Softmax
         # Using QSoftmax ensures bit-accuracy if the library requires it
-        self.softmax = QSoftmax(axis=-1)
+        self.softmax = keras.layers.Softmax(axis=-1)
 
     def call(self, x, training=False):
         # x shape: (batch, seq_len, in_dim)
@@ -104,6 +119,29 @@ class HGQSelfAttention(keras.layers.Layer):
         # PyTorch: "nqhc,nkhc->nhqk"
         # (n:batch, q:query_seq, k:key_seq, h:heads, c:head_dim)
         energy = ops.einsum("nqhc,nkhc->nhqk", queries, keys)
+
+        # 4.5 The Variance Injector (pre_exp_norm)
+        # if self.pre_exp_norm is not None:
+        #     seq_len_with_cls = self.num_particles + 1
+            
+        #     # Reshape from (batch, heads, seq, seq) to (batch, heads, seq * seq)
+        #     energy_flat = ops.reshape(
+        #         energy, (batch_size, self.num_heads, seq_len_with_cls * seq_len_with_cls)
+        #     )
+            
+        #     # Transpose to (batch, seq * seq, heads) to match PyTorch channel dim
+        #     energy_transposed = ops.transpose(energy_flat, (0, 2, 1))
+            
+        #     # Apply Normalization across batch and heads
+        #     energy_normed = self.pre_exp_norm(energy_transposed, training=training)
+            
+        #     # Transpose back and reshape
+        #     energy_restored = ops.transpose(energy_normed, (0, 2, 1))
+        #     energy_post = ops.reshape(
+        #         energy_restored, (batch_size, self.num_heads, seq_len_with_cls, seq_len_with_cls)
+        #     )
+        # else:
+        #     energy_post = energy
 
         # Scale and Softmax
         scale = ops.cast(self.head_dim, x.dtype) ** 0.5

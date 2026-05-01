@@ -70,13 +70,13 @@ class HGQFeedForward(keras.layers.Layer):
 
         # Block 1: Norm -> Activation -> Linear (Expansion)
         x = self.norm1(x, training=training)
-        x = self.activation_fn(x)
         x = self.dense1(x)
+        x = self.activation_fn(x)
 
         # Block 2: Norm -> Activation -> Linear (Contraction)
         x = self.norm2(x, training=training)
-        x = self.activation_fn(x)
         x = self.dense2(x)
+        x = self.activation_fn(x)
 
         return x
 
