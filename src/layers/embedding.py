@@ -1,5 +1,5 @@
 import keras
-from hgq.layers import QDense
+from hgq.layers import QDense, Quantizer
 
 
 class HGQEmbedding(keras.layers.Layer):
@@ -28,6 +28,14 @@ class HGQEmbedding(keras.layers.Layer):
             name="embedding_projection",
         )
 
+        if self.quantize:
+            self.quantizer = Quantizer(name="embedding_quantizer")
+        else:
+            self.quantizer = None
+
     def call(self, x, training=False):
         # x shape: (batch, num_particles, in_dim)
-        return self.dense_embedding(x)
+        x = self.dense_embedding(x)
+        if self.quantizer is not None:
+            x = self.quantizer(x)
+        return x

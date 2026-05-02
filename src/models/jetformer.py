@@ -1,6 +1,6 @@
 import keras
 from keras import ops
-from hgq.layers import QDense
+from hgq.layers import QDense, QLayerNormalization
 
 # Relative imports from your src directory structure
 from ..layers.embedding import HGQEmbedding
@@ -48,7 +48,9 @@ class HGQJetFormer(keras.Model):
         ]
 
         # 3. Final Normalization (Applied to CLS token output)
-        if self.normalization == "Batch":
+        if self.quantize:
+            self.final_norm = QLayerNormalization(axis=-1, name="final_norm")
+        elif self.normalization == "Batch":
             self.final_norm = keras.layers.BatchNormalization(
                 axis=-1, name="final_norm", momentum=0.9, epsilon=1e-5
             )
