@@ -280,7 +280,7 @@ def train(
                     current_output_dir, f"{num_particles}_{num_feats}f_plot.png"
                 )
             
-            eval_results_path = os.path.join(current_output_dir, f"fixed_act_func_{num_particles}_{num_feats}f_metrics.json")
+            eval_results_path = os.path.join(current_output_dir, f"{num_particles}_{num_feats}f_metrics.json")
 
             save_loss_acc(history.history, num_particles, num_feats, output_path)
             plot_loss_acc(history.history, num_particles, num_feats, plot_path)
@@ -327,6 +327,7 @@ if __name__ == "__main__":
         num_feats=args.num_feats,
         num_epochs=args.num_epochs,
         batch_size=args.batch_size,
+        num_transformers=2,
         early_stopping_patience=6,  # Enforced 0 to allow OneCycleLR decay phase
         val_ratio=0.1,
         experiment=args.experiment
