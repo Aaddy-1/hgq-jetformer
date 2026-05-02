@@ -1,6 +1,7 @@
 __pycache__
 .gemini
-data
+data/
 GEMINI.md
-models
+models/
 outputs/
+experiment/
