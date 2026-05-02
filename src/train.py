@@ -14,6 +14,9 @@ from sklearn.metrics import accuracy_score, roc_auc_score
 import keras
 import json
 
+# HGQ2 Imports
+from hgq import QuantizerConfigScope, LayerConfigScope, trace_minmax
+
 # Relative imports
 from src.dataset import JetFormerDataGenerator
 from src.models.jetformer import HGQJetFormer
@@ -37,6 +40,46 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # Define classes for the 150-particle dataset
 CLASSES = ["Gluon", "Light_quarks", "W_boson", "Z_boson", "Top_quark"]
+
+
+class EBOPsPIDCallback(keras.callbacks.Callback):
+    """
+    Custom Keras Callback that adjusts the EBOPs penalty (beta) dynamically
+    via a PID loop to hit a target EBOPs count.
+    """
+    def __init__(self, layer_scope, target_ebops=350000, kp=1e-8, ki=1e-9, kd=1e-9):
+        super().__init__()
+        self.layer_scope = layer_scope
+        self.target_ebops = target_ebops
+        self.kp = kp
+        self.ki = ki
+        self.kd = kd
+        self.prev_error = 0
+        self.integral = 0
+
+    def on_epoch_end(self, epoch, logs=None):
+        # Calculate current EBOPs from the model via the layer scope
+        # Note: In HGQ2, LayerConfigScope tracks the ebops of registered layers
+        current_ebops = self.layer_scope.get_ebops()
+        
+        error = current_ebops - self.target_ebops
+        self.integral += error
+        derivative = error - self.prev_error
+        
+        # PID adjustment logic:
+        # If EBOPs > target (error > 0), we want to INCREASE beta to penalize more.
+        adjustment = (self.kp * error) + (self.ki * self.integral) + (self.kd * derivative)
+        
+        # Update the Keras Backend Variable inside the scope
+        # layer_scope.beta is expected to be a keras.Variable
+        current_beta = float(keras.ops.convert_to_numpy(self.layer_scope.beta))
+        new_beta = np.clip(current_beta + adjustment, 1e-10, 1.0)
+        
+        # Assign back to the backend variable
+        self.layer_scope.beta.assign(new_beta)
+        
+        self.prev_error = error
+        print(f"\n[PID Controller] Epoch {epoch+1}: EBOPs={current_ebops:,.0f}, Beta={new_beta:.2e}")
 
 
 def build_lr_schedule(max_lr, total_steps, pct_start=0.2):
@@ -193,6 +236,7 @@ def train(
     plot_path: str = None,
     output_path: str = None,
     experiment: str = None,
+    quantize: bool = True,
 ):
     train_gen, val_gen, test_gen = setup_data_generators(
         num_particles=num_particles,
@@ -216,100 +260,112 @@ def train(
     lr_schedule = build_lr_schedule(max_lr=1e-3, total_steps=total_steps)
     optimizer = keras.optimizers.AdamW(learning_rate=lr_schedule, weight_decay=1e-2, global_clipnorm=1.0)
 
-    model = HGQJetFormer(
-        in_dim=num_feats,
-        embed_dim=embbed_dim,
-        num_heads=num_heads,
-        num_classes=len(CLASSES),
-        num_transformers=num_transformers,
-        dropout=dropout,
-        num_particles=num_particles,
-        activation=activation,
-        normalization=normalization,
-        quantize=False,
-    )
+    # Wrap model instantiation and training in HGQ2 Scopes
+    with QuantizerConfigScope(place='all', default_q_type='kbi', overflow_mode='SAT_SYM'), \
+         LayerConfigScope(enable_ebops=True, beta0=1e-5) as layer_scope:
 
-    dummy_tensor = keras.ops.zeros((1, num_particles, num_feats))
-    model(dummy_tensor)
+        model = HGQJetFormer(
+            in_dim=num_feats,
+            embed_dim=embbed_dim,
+            num_heads=num_heads,
+            num_classes=len(CLASSES),
+            num_transformers=num_transformers,
+            dropout=dropout,
+            num_particles=num_particles,
+            activation=activation,
+            normalization=normalization,
+            quantize=quantize,
+        )
 
-    # Output the fully instantiated architectural footprint
-    print("=================MODEL SUMMARY=================")
-    model.summary()
+        dummy_tensor = keras.ops.zeros((1, num_particles, num_feats))
+        model(dummy_tensor)
 
-    model.compile(
-        optimizer=optimizer,
-        loss=keras.losses.SparseCategoricalCrossentropy(from_logits=True),
-        metrics=["sparse_categorical_accuracy"],
-    )
+        # Output the fully instantiated architectural footprint
+        print("=================MODEL SUMMARY=================")
+        model.summary()
 
-    callbacks = []
-    if early_stopping_patience > 0:
-        callbacks.append(
-            keras.callbacks.EarlyStopping(
-                monitor="val_loss",
-                patience=early_stopping_patience,
-                min_delta=1e-4,
-                restore_best_weights=True,
+        model.compile(
+            optimizer=optimizer,
+            loss=keras.losses.SparseCategoricalCrossentropy(from_logits=True),
+            metrics=["sparse_categorical_accuracy"],
+        )
+
+        callbacks = []
+        if early_stopping_patience > 0:
+            callbacks.append(
+                keras.callbacks.EarlyStopping(
+                    monitor="val_loss",
+                    patience=early_stopping_patience,
+                    min_delta=1e-4,
+                    restore_best_weights=True,
+                )
             )
-        )
 
-    if save:
-        if model_path is None:
-            model_path = os.path.join(current_model_dir, f"{num_particles}_{num_feats}f.keras")
-        callbacks.append(
-            keras.callbacks.ModelCheckpoint(
-                filepath=model_path, monitor="val_loss", save_best_only=True
-            )
-        )
-
-    if do_train:
-        print(
-            f"Starting training for {num_particles} particles, {num_feats} features with early stopping {early_stopping_patience}... "
-        )
-        history = model.fit(
-            train_gen, validation_data=val_gen, epochs=num_epochs, callbacks=callbacks
-        )
+        if quantize:
+            callbacks.append(EBOPsPIDCallback(layer_scope=layer_scope, target_ebops=350000))
 
         if save:
-            if output_path is None:
-                output_path = os.path.join(
-                    current_output_dir, f"{num_particles}_{num_feats}f_loss_acc.npz"
+            if model_path is None:
+                model_path = os.path.join(current_model_dir, f"{num_particles}_{num_feats}f.keras")
+            callbacks.append(
+                keras.callbacks.ModelCheckpoint(
+                    filepath=model_path, monitor="val_loss", save_best_only=True
                 )
-            if plot_path is None:
-                plot_path = os.path.join(
-                    current_output_dir, f"{num_particles}_{num_feats}f_plot.png"
-                )
-            
-            eval_results_path = os.path.join(current_output_dir, f"{num_particles}_{num_feats}f_metrics.json")
+            )
 
-            save_loss_acc(history.history, num_particles, num_feats, output_path)
-            plot_loss_acc(history.history, num_particles, num_feats, plot_path)
-    
-    print("\nLoading Best Checkpoint Weights...")
-    # Explicitly restore the optimal weights saved by ModelCheckpoint
-    if save and model_path is not None:
-        model.load_weights(model_path)
+        if do_train:
+            print(
+                f"Starting training for {num_particles} particles, {num_feats} features with early stopping {early_stopping_patience}... "
+            )
+            history = model.fit(
+                train_gen, validation_data=val_gen, epochs=num_epochs, callbacks=callbacks
+            )
 
-    print("\nExecuting Inference on Test Set...")
-    outputs = model.predict(test_gen)
+            if save:
+                if output_path is None:
+                    output_path = os.path.join(
+                        current_output_dir, f"{num_particles}_{num_feats}f_loss_acc.npz"
+                    )
+                if plot_path is None:
+                    plot_path = os.path.join(
+                        current_output_dir, f"{num_particles}_{num_feats}f_plot.png"
+                    )
+                
+                eval_results_path = os.path.join(current_output_dir, f"{num_particles}_{num_feats}f_metrics.json")
 
-    # Extract true labels directly from the un-shuffled generator
-    labels = np.concatenate([y for _, y in test_gen], axis=0)
+                save_loss_acc(history.history, num_particles, num_feats, output_path)
+                plot_loss_acc(history.history, num_particles, num_feats, plot_path)
+        
+        # Post-Training Activation Profiling for WRAP mode safety
+        if quantize:
+            print("\nProfiling activations for WRAP mode bit allocation...")
+            trace_minmax(model, train_gen)
 
-    test_acc, test_class_accs, test_aucs = evaluate(outputs, labels, CLASSES)
+        print("\nLoading Best Checkpoint Weights...")
+        # Explicitly restore the optimal weights saved by ModelCheckpoint
+        if save and model_path is not None:
+            model.load_weights(model_path)
 
-    # Persist to disk
-    if save:
-        save_final_evaluation(
-            test_acc, 
-            test_class_accs, 
-            test_aucs, 
-            CLASSES, 
-            eval_results_path
-        )
-        print(f"Final metrics saved to: {eval_results_path}")
+        print("\nExecuting Inference on Test Set...")
+        outputs = model.predict(test_gen)
 
-    evaluate(outputs, labels, CLASSES)
+        # Extract true labels directly from the un-shuffled generator
+        labels = np.concatenate([y for _, y in test_gen], axis=0)
+
+        test_acc, test_class_accs, test_aucs = evaluate(outputs, labels, CLASSES)
+
+        # Persist to disk
+        if save:
+            save_final_evaluation(
+                test_acc, 
+                test_class_accs, 
+                test_aucs, 
+                CLASSES, 
+                eval_results_path
+            )
+            print(f"Final metrics saved to: {eval_results_path}")
+
+        evaluate(outputs, labels, CLASSES)
 
 
 if __name__ == "__main__":
@@ -319,6 +375,7 @@ if __name__ == "__main__":
     parser.add_argument("--num_epochs", type=int, default=25, help="Total training epochs")
     parser.add_argument("--batch_size", type=int, default=256, help="Training batch size")
     parser.add_argument("--experiment", type=str, default=None, help="Name of the experiment folder")
+    parser.add_argument("--quantize", type=bool, default=True, help="Enable HGQ2 quantization")
     
     args = parser.parse_args()
 
@@ -330,5 +387,6 @@ if __name__ == "__main__":
         num_transformers=2,
         early_stopping_patience=6,  # Enforced 0 to allow OneCycleLR decay phase
         val_ratio=0.1,
-        experiment=args.experiment
+        experiment=args.experiment,
+        quantize=args.quantize
     )

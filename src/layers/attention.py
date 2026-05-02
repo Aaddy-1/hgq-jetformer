@@ -1,6 +1,6 @@
 import keras
 from keras import ops
-from hgq.layers import QDense, QSoftmax
+from hgq.layers import QDense, QSoftmax, QLayerNormalization, Quantizer
 
 
 class HGQSelfAttention(keras.layers.Layer):
@@ -30,7 +30,9 @@ class HGQSelfAttention(keras.layers.Layer):
         )
 
         # 1. Normalization Selection
-        if self.normalization == "Batch":
+        if self.quantize:
+            self.norm = QLayerNormalization(axis=-1, name="input_norm")
+        elif self.normalization == "Batch":
             self.norm = keras.layers.BatchNormalization(
                 axis=-1, momentum=momentum, epsilon=1e-5
             )
@@ -63,8 +65,10 @@ class HGQSelfAttention(keras.layers.Layer):
         )
         # Add this after your Q, K, V projections
         seq_len_with_cls = self.num_particles + 1
-        
-        if self.normalization == "Batch":
+
+        if self.quantize:
+            self.pre_exp_norm = QLayerNormalization(axis=1, name="pre_exp_norm")
+        elif self.normalization == "Batch":
             # axis=1 maps to the flattened seq_len*seq_len dimension
             self.pre_exp_norm = keras.layers.BatchNormalization(
                 axis=1, momentum=self.momentum, epsilon=1e-5, name="pre_exp_norm"
@@ -76,7 +80,6 @@ class HGQSelfAttention(keras.layers.Layer):
         else:
             self.pre_exp_norm = None
 
-
         # 3. Output Projection (Uses bias by default in PyTorch)
         self.out_proj = dense_cls(
             self.in_dim,
@@ -87,7 +90,24 @@ class HGQSelfAttention(keras.layers.Layer):
 
         # 4. Attention Softmax
         # Using QSoftmax ensures bit-accuracy if the library requires it
-        self.softmax = keras.layers.Softmax(axis=-1)
+        if self.quantize:
+            self.softmax = QSoftmax(axis=-1)
+        else:
+            self.softmax = keras.layers.Softmax(axis=-1)
+
+        # 5. HGQ2 Quantizers
+        if self.quantize:
+            self.q_quantizer = Quantizer(name="q_quantizer")
+            self.k_quantizer = Quantizer(name="k_quantizer")
+            self.v_quantizer = Quantizer(name="v_quantizer")
+            self.attn_quantizer = Quantizer(name="attn_quantizer")
+            self.out_quantizer = Quantizer(name="out_quantizer")
+        else:
+            self.q_quantizer = None
+            self.k_quantizer = None
+            self.v_quantizer = None
+            self.attn_quantizer = None
+            self.out_quantizer = None
 
     def call(self, x, training=False):
         # x shape: (batch, seq_len, in_dim)
@@ -115,41 +135,32 @@ class HGQSelfAttention(keras.layers.Layer):
             values, (batch_size, seq_len, self.num_heads, self.head_dim)
         )
 
+        # 3.5 Dynamic Operand Quantization
+        if self.quantize:
+            queries = self.q_quantizer(queries)
+            keys = self.k_quantizer(keys)
+            values = self.v_quantizer(values)
+
         # 4. Energy Calculation: Attention softmax(Q^T * K)
         # PyTorch: "nqhc,nkhc->nhqk"
         # (n:batch, q:query_seq, k:key_seq, h:heads, c:head_dim)
         energy = ops.einsum("nqhc,nkhc->nhqk", queries, keys)
 
-        # 4.5 The Variance Injector (pre_exp_norm)
-        # if self.pre_exp_norm is not None:
-        #     seq_len_with_cls = self.num_particles + 1
-            
-        #     # Reshape from (batch, heads, seq, seq) to (batch, heads, seq * seq)
-        #     energy_flat = ops.reshape(
-        #         energy, (batch_size, self.num_heads, seq_len_with_cls * seq_len_with_cls)
-        #     )
-            
-        #     # Transpose to (batch, seq * seq, heads) to match PyTorch channel dim
-        #     energy_transposed = ops.transpose(energy_flat, (0, 2, 1))
-            
-        #     # Apply Normalization across batch and heads
-        #     energy_normed = self.pre_exp_norm(energy_transposed, training=training)
-            
-        #     # Transpose back and reshape
-        #     energy_restored = ops.transpose(energy_normed, (0, 2, 1))
-        #     energy_post = ops.reshape(
-        #         energy_restored, (batch_size, self.num_heads, seq_len_with_cls, seq_len_with_cls)
-        #     )
-        # else:
-        #     energy_post = energy
-
         # Scale and Softmax
         scale = ops.cast(self.head_dim, x.dtype) ** 0.5
         attention = self.softmax(energy / scale)
 
+        # 4.5 Attention Score Quantization
+        if self.attn_quantizer is not None:
+            attention = self.attn_quantizer(attention)
+
         # 5. Context Vector Calculation
         # PyTorch: "nhql,nlhc->nqhc"
         out = ops.einsum("nhql,nlhc->nqhc", attention, values)
+
+        # 5.5 Context Requantization Boundary
+        if self.out_quantizer is not None:
+            out = self.out_quantizer(out)
 
         # 6. Re-combine heads and Final Projection
         out = ops.reshape(out, (batch_size, seq_len, self.latent_dim))
