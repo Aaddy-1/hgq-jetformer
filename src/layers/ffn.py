@@ -1,5 +1,5 @@
 import keras
-from hgq.layers import QDense, QLayerNormalization, Quantizer
+from hgq.layers import QDense, QBatchNormalization, Quantizer
 
 
 @keras.saving.register_keras_serializable()
@@ -39,7 +39,7 @@ class HGQFeedForward(keras.layers.Layer):
 
         def get_norm(name):
             if self.quantize:
-                return QLayerNormalization(axis=-1, name=name)
+                return QBatchNormalization(axis=-1, name=name, epsilon=1e-5)
             if normalization == "Batch":
                 return keras.layers.BatchNormalization(
                     axis=-1, name=name, momentum=momentum, epsilon=1e-5
@@ -67,8 +67,11 @@ class HGQFeedForward(keras.layers.Layer):
         # Activation (Keras 'silu' is equivalent to torch.nn.SiLU)
         self.activation_fn = keras.activations.get(activation.lower())
 
+        
+
         if self.quantize:
             self.quantizer1 = Quantizer(name="ffn_quantizer1")
+            self.residual_align_norm = QBatchNormalization(axis=-1, name="residual_align", epsilon=1e-5)
             self.quantizer2 = Quantizer(name="ffn_quantizer2")
         else:
             self.quantizer1 = None
@@ -90,6 +93,9 @@ class HGQFeedForward(keras.layers.Layer):
         x = self.activation_fn(x)
         if self.quantizer2 is not None:
             x = self.quantizer2(x)
+
+        if self.residual_align_norm is not None:
+            x = self.residual_align_norm(x, training=training)
 
         return x
 
