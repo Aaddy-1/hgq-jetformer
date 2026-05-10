@@ -1,7 +1,7 @@
 import os
 
 # Route Keras to the installed backend
-os.environ["KERAS_BACKEND"] = "jax"  # or "tensorflow"
+os.environ["KERAS_BACKEND"] = "tensorflow"  # or "tensorflow"
 
 # If using JAX: Prevent the backend from pre-allocating 100% of VRAM,
 # which can crash out-of-core data loaders.
@@ -15,12 +15,14 @@ import keras
 import json
 
 # HGQ2 Imports
-from hgq import QuantizerConfigScope, LayerConfigScope, trace_minmax
+from hgq.config import QuantizerConfigScope, LayerConfigScope
+from hgq.utils import trace_minmax
 
 # Relative imports
 from src.dataset import JetFormerDataGenerator
 from src.models.jetformer import HGQJetFormer
 from src.onecyclelr import OneCycleLR
+from hgq.utils.sugar.beta_pid import BetaPID
 
 
 # Resolves to the 'src' directory
@@ -40,46 +42,6 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # Define classes for the 150-particle dataset
 CLASSES = ["Gluon", "Light_quarks", "W_boson", "Z_boson", "Top_quark"]
-
-
-class EBOPsPIDCallback(keras.callbacks.Callback):
-    """
-    Custom Keras Callback that adjusts the EBOPs penalty (beta) dynamically
-    via a PID loop to hit a target EBOPs count.
-    """
-    def __init__(self, layer_scope, target_ebops=350000, kp=1e-8, ki=1e-9, kd=1e-9):
-        super().__init__()
-        self.layer_scope = layer_scope
-        self.target_ebops = target_ebops
-        self.kp = kp
-        self.ki = ki
-        self.kd = kd
-        self.prev_error = 0
-        self.integral = 0
-
-    def on_epoch_end(self, epoch, logs=None):
-        # Calculate current EBOPs from the model via the layer scope
-        # Note: In HGQ2, LayerConfigScope tracks the ebops of registered layers
-        current_ebops = self.layer_scope.get_ebops()
-        
-        error = current_ebops - self.target_ebops
-        self.integral += error
-        derivative = error - self.prev_error
-        
-        # PID adjustment logic:
-        # If EBOPs > target (error > 0), we want to INCREASE beta to penalize more.
-        adjustment = (self.kp * error) + (self.ki * self.integral) + (self.kd * derivative)
-        
-        # Update the Keras Backend Variable inside the scope
-        # layer_scope.beta is expected to be a keras.Variable
-        current_beta = float(keras.ops.convert_to_numpy(self.layer_scope.beta))
-        new_beta = np.clip(current_beta + adjustment, 1e-10, 1.0)
-        
-        # Assign back to the backend variable
-        self.layer_scope.beta.assign(new_beta)
-        
-        self.prev_error = error
-        print(f"\n[PID Controller] Epoch {epoch+1}: EBOPs={current_ebops:,.0f}, Beta={new_beta:.2e}")
 
 
 def build_lr_schedule(max_lr, total_steps, pct_start=0.2):
@@ -252,17 +214,24 @@ def train(
     else:
         current_model_dir = MODEL_DIR
         current_output_dir = OUTPUT_DIR
+    
+    if quantize:
+        current_model_dir = os.path.join(current_model_dir, "quantized")
+        current_output_dir = os.path.join(current_output_dir, "quantized")
 
     os.makedirs(current_model_dir, exist_ok=True)
     os.makedirs(current_output_dir, exist_ok=True)
 
     total_steps = len(train_gen) * num_epochs
-    lr_schedule = build_lr_schedule(max_lr=1e-3, total_steps=total_steps)
-    optimizer = keras.optimizers.AdamW(learning_rate=lr_schedule, weight_decay=1e-2, global_clipnorm=1.0)
+    # lr_schedule = build_lr_schedule(max_lr=1e-3, total_steps=total_steps)
+    optimizer = keras.optimizers.AdamW(learning_rate=1e-3, weight_decay=1e-4, global_clipnorm=1.0)
+
+    # Instantiate scopes BEFORE the context manager
+    quant_scope = QuantizerConfigScope(place='all', default_q_type='kbi', overflow_mode='WRAP')
+    layer_scope = LayerConfigScope(enable_ebops=True, beta0=1e-11)
 
     # Wrap model instantiation and training in HGQ2 Scopes
-    with QuantizerConfigScope(place='all', default_q_type='kbi', overflow_mode='SAT_SYM'), \
-         LayerConfigScope(enable_ebops=True, beta0=1e-5) as layer_scope:
+    with quant_scope, layer_scope:
 
         model = HGQJetFormer(
             in_dim=num_feats,
@@ -277,8 +246,12 @@ def train(
             quantize=quantize,
         )
 
-        dummy_tensor = keras.ops.zeros((1, num_particles, num_feats))
-        model(dummy_tensor)
+        # Extract a physical batch from the generator to perfectly calibrate initial QAT bit-widths
+        physical_batch, _ = next(iter(train_gen))
+
+        # Force Keras to allocate the Training and Inference graphs
+        model(physical_batch, training=True)
+        model(physical_batch, training=False)
 
         # Output the fully instantiated architectural footprint
         print("=================MODEL SUMMARY=================")
@@ -300,13 +273,30 @@ def train(
                     restore_best_weights=True,
                 )
             )
+        
+        # Add this inside your training block before model.fit()
+        callbacks.append(
+            keras.callbacks.ReduceLROnPlateau(
+                monitor="val_loss",
+                factor=0.8,
+                patience=5,
+                min_lr=1e-4
+            )
+        )
 
         if quantize:
-            callbacks.append(EBOPsPIDCallback(layer_scope=layer_scope, target_ebops=350000))
+            callbacks.append(
+                BetaPID(
+                    target_ebops=350000.0,
+                    warmup=10
+                )
+            )
 
         if save:
             if model_path is None:
                 model_path = os.path.join(current_model_dir, f"{num_particles}_{num_feats}f.keras")
+            # Initialize eval path here to ensure global function scope
+            eval_results_path = os.path.join(current_output_dir, f"{num_particles}_{num_feats}f_metrics.json")
             callbacks.append(
                 keras.callbacks.ModelCheckpoint(
                     filepath=model_path, monitor="val_loss", save_best_only=True
@@ -315,7 +305,7 @@ def train(
 
         if do_train:
             print(
-                f"Starting training for {num_particles} particles, {num_feats} features with early stopping {early_stopping_patience}... "
+                f"Starting training for {num_particles} particles, {num_feats} features with early stopping {early_stopping_patience} and {'with' if quantize else 'without'} quantization ... "
             )
             history = model.fit(
                 train_gen, validation_data=val_gen, epochs=num_epochs, callbacks=callbacks
@@ -330,16 +320,34 @@ def train(
                     plot_path = os.path.join(
                         current_output_dir, f"{num_particles}_{num_feats}f_plot.png"
                     )
-                
-                eval_results_path = os.path.join(current_output_dir, f"{num_particles}_{num_feats}f_metrics.json")
-
+            
                 save_loss_acc(history.history, num_particles, num_feats, output_path)
                 plot_loss_acc(history.history, num_particles, num_feats, plot_path)
         
         # Post-Training Activation Profiling for WRAP mode safety
-        if quantize:
-            print("\nProfiling activations for WRAP mode bit allocation...")
-            trace_minmax(model, train_gen)
+        # if quantize:
+        #     print("\nProfiling activations for WRAP mode bit allocation...")
+            
+        #     # 1. Define a symbolic Keras Input matching the batch geometry
+        #     symbolic_input = keras.Input(shape=(num_particles, num_feats), name="profiler_input")
+
+        #     # 2. Route the symbolic input through the trained subclassed model
+        #     symbolic_output = model(symbolic_input)
+
+        #     # 3. Instantiate a strict Functional Model wrapper to expose the .outputs attribute
+        #     functional_model = keras.Model(inputs=symbolic_input, outputs=symbolic_output)
+
+        #     # Create a small subset generator for profiling
+        #     def profiler_generator(gen, steps=10):
+        #         iterator = iter(gen)
+        #         for _ in range(steps):
+        #             yield next(iterator)
+
+        #     # Execute the profiler on a fraction of the data
+        #     trace_minmax(functional_model, profiler_generator(train_gen, steps=10))
+
+        #     # # 4. Execute the HGQ profiler on the wrapped graph
+        #     # trace_minmax(functional_model, train_gen)
 
         print("\nLoading Best Checkpoint Weights...")
         # Explicitly restore the optimal weights saved by ModelCheckpoint
@@ -365,7 +373,7 @@ def train(
             )
             print(f"Final metrics saved to: {eval_results_path}")
 
-        evaluate(outputs, labels, CLASSES)
+        # evaluate(outputs, labels, CLASSES)
 
 
 if __name__ == "__main__":
@@ -375,8 +383,7 @@ if __name__ == "__main__":
     parser.add_argument("--num_epochs", type=int, default=25, help="Total training epochs")
     parser.add_argument("--batch_size", type=int, default=256, help="Training batch size")
     parser.add_argument("--experiment", type=str, default=None, help="Name of the experiment folder")
-    parser.add_argument("--quantize", type=bool, default=True, help="Enable HGQ2 quantization")
-    
+    parser.add_argument("--quantize", action=argparse.BooleanOptionalAction, default=True, help="Enable HGQ2 quantization")
     args = parser.parse_args()
 
     train(
@@ -384,8 +391,8 @@ if __name__ == "__main__":
         num_feats=args.num_feats,
         num_epochs=args.num_epochs,
         batch_size=args.batch_size,
-        num_transformers=2,
-        early_stopping_patience=6,  # Enforced 0 to allow OneCycleLR decay phase
+        num_transformers=3,
+        early_stopping_patience=15,  # Enforced 0 to allow OneCycleLR decay phase
         val_ratio=0.1,
         experiment=args.experiment,
         quantize=args.quantize

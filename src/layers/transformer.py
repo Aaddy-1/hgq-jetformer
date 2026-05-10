@@ -1,7 +1,7 @@
 import keras
 from .attention import HGQSelfAttention
 from .ffn import HGQFeedForward
-
+from hgq.layers import QAdd
 
 class HGQTransformerBlock(keras.layers.Layer):
     def __init__(
@@ -42,6 +42,8 @@ class HGQTransformerBlock(keras.layers.Layer):
 
         self.dropout = keras.layers.Dropout(dropout)
 
+        self.q_add = QAdd(name="residual_add") if quantize else keras.layers.Add()
+
     def call(self, x, training=False):
         # Step 1: Self-Attention (Residual is internal to our HGQSelfAttention)
         attn_out = self.self_attention(x, training=training)
@@ -51,7 +53,7 @@ class HGQTransformerBlock(keras.layers.Layer):
 
         # Step 3: Final Residual (out = x_after_attn + ffn_output)
         # Mirroring the PyTorch: out = x + out5
-        x = attn_out + ffn_out
+        x = self.q_add([attn_out, ffn_out])
 
         # Step 4: Final Dropout
         return self.dropout(x, training=training)
