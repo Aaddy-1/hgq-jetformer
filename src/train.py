@@ -20,7 +20,7 @@ from hgq.utils import trace_minmax
 
 # Relative imports
 from src.dataset import JetFormerDataGenerator
-from src.models.jetformer import HGQJetFormer
+from src.models.jetformer import build_hgq_jetformer
 from src.onecyclelr import OneCycleLR
 from hgq.utils.sugar.beta_pid import BetaPID
 
@@ -233,7 +233,8 @@ def train(
     # Wrap model instantiation and training in HGQ2 Scopes
     with quant_scope, layer_scope:
 
-        model = HGQJetFormer(
+        # 1. Instantiate the Statically Traceable Graph
+        model = build_hgq_jetformer(
             in_dim=num_feats,
             embed_dim=embbed_dim,
             num_heads=num_heads,
@@ -246,12 +247,8 @@ def train(
             quantize=quantize,
         )
 
-        # Extract a physical batch from the generator to perfectly calibrate initial QAT bit-widths
-        physical_batch, _ = next(iter(train_gen))
-
-        # Force Keras to allocate the Training and Inference graphs
-        model(physical_batch, training=True)
-        model(physical_batch, training=False)
+        # The manual forward pass (model(physical_batch)) is removed.
+        # The Keras Functional API pre-compiles the topological footprint.
 
         # Output the fully instantiated architectural footprint
         print("=================MODEL SUMMARY=================")

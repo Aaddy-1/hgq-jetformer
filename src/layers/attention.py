@@ -1,182 +1,97 @@
 import keras
 from keras import ops
-from hgq.layers import QDense, QSoftmax, QBatchNormalization, Quantizer, QAdd
+from hgq.layers import QDense, QSoftmax, QBatchNormalization, Quantizer, QAdd, QEinsum
 
-class HGQSelfAttention(keras.layers.Layer):
-    def __init__(
-        self,
-        in_dim,
-        latent_dim=None,
-        num_heads=1,
-        num_particles=30,
-        normalization="Layer",
-        momentum=0.9,
-        quantize=True,
-        **kwargs
-    ):
-        super().__init__(**kwargs)
-        self.in_dim = in_dim
-        self.latent_dim = latent_dim if latent_dim is not None else in_dim
-        self.num_heads = num_heads
-        self.head_dim = self.latent_dim // num_heads
-        self.normalization = normalization
-        self.momentum = momentum
-        self.num_particles = num_particles
-        self.quantize = quantize
-        # This is exactly how weights are initialized in Pytorch's nn.Linear by default
-        self.parity_initializer = keras.initializers.VarianceScaling(
-            scale=1 / 3, mode="fan_in", distribution="uniform"
-        )
+def apply_hgq_self_attention(
+    x,
+    in_dim,
+    latent_dim=None,
+    num_heads=1,
+    num_particles=30,
+    normalization="Layer",
+    momentum=0.9,
+    quantize=True,
+    prefix="self_attn",
+    training=False
+):
+    latent_dim = latent_dim if latent_dim is not None else in_dim
+    head_dim = latent_dim // num_heads
+    inv_scale = head_dim ** -0.5
 
-        # 1. Normalization Selection
-        if self.quantize:
-            self.norm = QBatchNormalization(axis=-1, name="input_norm", epsilon=1e-5)
-        elif self.normalization == "Batch":
-            self.norm = keras.layers.BatchNormalization(
-                axis=-1, momentum=momentum, epsilon=1e-5
-            )
-        elif self.normalization == "Layer":
-            self.norm = keras.layers.LayerNormalization(axis=-1)
-        else:
-            self.norm = None
+    parity_initializer = keras.initializers.VarianceScaling(
+        scale=1 / 3, mode="fan_in", distribution="uniform"
+    )
 
-        # 2. Q, K, V Projections (Replacing nn.Linear)
-        # Jetformer uses bias=False for Q, K, V
-        dense_cls = QDense if quantize else keras.layers.Dense
+    residual = x
 
-        self.q_proj = dense_cls(
-            self.latent_dim,
-            use_bias=False,
-            kernel_initializer=self.parity_initializer,
-            name="query",
-        )
-        self.k_proj = dense_cls(
-            self.latent_dim,
-            use_bias=False,
-            kernel_initializer=self.parity_initializer,
-            name="key",
-        )
-        self.v_proj = dense_cls(
-            self.latent_dim,
-            use_bias=False,
-            kernel_initializer=self.parity_initializer,
-            name="value",
-        )
-        # Add this after your Q, K, V projections
-        seq_len_with_cls = self.num_particles + 1
+    # 1. Input Normalization
+    if quantize:
+        x = QBatchNormalization(axis=-1, epsilon=1e-5, name=f"{prefix}_input_norm")(x, training=training)
+    elif normalization == "Batch":
+        x = keras.layers.BatchNormalization(axis=-1, momentum=momentum, epsilon=1e-5, name=f"{prefix}_input_norm")(x, training=training)
+    elif normalization == "Layer":
+        x = keras.layers.LayerNormalization(axis=-1, name=f"{prefix}_input_norm")(x)
 
-        # if self.quantize:
-        #     self.pre_exp_norm = QBatchNormalization(axis=1, name="pre_exp_norm", epsilon=1e-3)
-        # elif self.normalization == "Batch":
-        #     # axis=1 maps to the flattened seq_len*seq_len dimension
-        #     self.pre_exp_norm = keras.layers.BatchNormalization(
-        #         axis=1, momentum=self.momentum, epsilon=1e-5, name="pre_exp_norm"
-        #     )
-        # elif self.normalization == "Layer":
-        #     self.pre_exp_norm = keras.layers.LayerNormalization(
-        #         axis=1, name="pre_exp_norm"
-        #     )
-        # else:
-        #     self.pre_exp_norm = None
+    # 2. Generate Q, K, V Projections
+    dense_cls = QDense if quantize else keras.layers.Dense
+    
+    queries = dense_cls(latent_dim, use_bias=False, kernel_initializer=parity_initializer, name=f"{prefix}_query")(x)
+    keys = dense_cls(latent_dim, use_bias=False, kernel_initializer=parity_initializer, name=f"{prefix}_key")(x)
+    values = dense_cls(latent_dim, use_bias=False, kernel_initializer=parity_initializer, name=f"{prefix}_value")(x)
 
-        # 3. Output Projection (Uses bias by default in PyTorch)
-        self.out_proj = dense_cls(
-            self.in_dim,
-            kernel_initializer=self.parity_initializer,
-            bias_initializer=self.parity_initializer,
-            name="output",
-        )
+    # 3. Reshape for Multi-Head
+    shape = ops.shape(x)
+    batch_size, seq_len = shape[0], shape[1]
 
-        # 4. Attention Softmax
-        # Using QSoftmax ensures bit-accuracy if the library requires it
-        if self.quantize:
-            self.softmax = QSoftmax(axis=-1)
-        else:
-            self.softmax = keras.layers.Softmax(axis=-1)
+    queries = ops.reshape(queries, (batch_size, seq_len, num_heads, head_dim))
+    keys = ops.reshape(keys, (batch_size, seq_len, num_heads, head_dim))
+    values = ops.reshape(values, (batch_size, seq_len, num_heads, head_dim))
 
-        # # 5. HGQ2 Quantizers
-        if self.quantize:
-            self.energy_quantizer = Quantizer(name="energy_quantizer")
-        #     self.q_quantizer = Quantizer(name="q_quantizer")
-        #     self.k_quantizer = Quantizer(name="k_quantizer")
-        #     self.v_quantizer = Quantizer(name="v_quantizer")
-        #     self.attn_quantizer = Quantizer(name="attn_quantizer")
-            self.out_quantizer = Quantizer(name="out_quantizer")
-            self.residual_align_norm = QBatchNormalization(axis=-1, name="residual_align", epsilon=1e-5)
-        # else:
-        #     self.q_quantizer = None
-        #     self.k_quantizer = None
-        #     self.v_quantizer = None
-        #     self.attn_quantizer = None
-        #     self.out_quantizer = None
+    # 4. Energy Calculation & Scaling via native QEinsum
+    # 4. Energy Calculation & Scaling
+    if quantize:
+        energy = QEinsum("nqhc,nkhc->nhqk", name=f"{prefix}_energy_einsum")([queries, keys])
+    else:
+        energy = keras.layers.Lambda(
+            lambda inputs: ops.einsum("nqhc,nkhc->nhqk", inputs[0], inputs[1]),
+            name=f"{prefix}_energy_einsum"
+        )([queries, keys])
+        
+    scaled_energy = energy * inv_scale
 
-        self.inv_scale = self.head_dim ** -0.5
+    if quantize:
+        scaled_energy = Quantizer(name=f"{prefix}_energy_quantizer")(scaled_energy)
 
-        self.q_add = QAdd(name="residual_add") if quantize else keras.layers.Add()
+    # Softmax
+    softmax_cls = QSoftmax if quantize else keras.layers.Softmax
+    attention = softmax_cls(axis=-1, name=f"{prefix}_softmax")(scaled_energy)
 
-    def call(self, x, training=False):
-        # x shape: (batch, seq_len, in_dim)
-        residual = x
+    # 5. Context Vector Calculation via native QEinsum
+    if quantize:
+        out = QEinsum("nhql,nlhc->nqhc", name=f"{prefix}_context_einsum")([attention, values])
+    else:
+        out = keras.layers.Lambda(
+            lambda inputs: ops.einsum("nhql,nlhc->nqhc", inputs[0], inputs[1]),
+            name=f"{prefix}_context_einsum"
+        )([attention, values])
 
-        # 1. Input Normalization
-        if self.norm is not None:
-            x = self.norm(x, training=training)
+    if quantize:
+        out = Quantizer(name=f"{prefix}_out_quantizer")(out)
 
-        # 2. Generate Q, K, V
-        queries = self.q_proj(x)
-        keys = self.k_proj(x)
-        values = self.v_proj(x)
+    # 6. Re-combine heads and Final Projection
+    out = ops.reshape(out, (batch_size, seq_len, latent_dim))
+    
+    out = dense_cls(
+        in_dim, 
+        kernel_initializer=parity_initializer, 
+        bias_initializer=parity_initializer, 
+        name=f"{prefix}_output"
+    )(out)
 
-        # 3. Reshape for Multi-Head: (batch, seq_len, heads, head_dim)
-        # We use ops.reshape to stay backend-agnostic
-        shape = ops.shape(x)
-        batch_size, seq_len = shape[0], shape[1]
+    # 7. Residual Alignment 
+    if quantize:
+        out = QBatchNormalization(axis=-1, epsilon=1e-5, name=f"{prefix}_residual_align")(out, training=training)
 
-        queries = ops.reshape(
-            queries, (batch_size, seq_len, self.num_heads, self.head_dim)
-        )
-        keys = ops.reshape(keys, (batch_size, seq_len, self.num_heads, self.head_dim))
-        values = ops.reshape(
-            values, (batch_size, seq_len, self.num_heads, self.head_dim)
-        )
-
-        # # 3.5 Dynamic Operand Quantization
-        # if self.quantize:
-        #     queries = self.q_quantizer(queries)
-        #     keys = self.k_quantizer(keys)
-        #     values = self.v_quantizer(values)
-
-        # 4. Energy Calculation: Attention softmax(Q^T * K)
-        # PyTorch: "nqhc,nkhc->nhqk"
-        # (n:batch, q:query_seq, k:key_seq, h:heads, c:head_dim)
-        energy = ops.einsum("nqhc,nkhc->nhqk", queries, keys)
-        scaled_energy = energy * self.inv_scale
-
-        ### EXTRA CRIUCIAL STEP FOR QAT
-        if self.energy_quantizer is not None:
-            scaled_energy = self.energy_quantizer(scaled_energy)
-
-        # Scale and Softmax
-        attention = self.softmax(scaled_energy)
-
-        # # 4.5 Attention Score Quantization
-        # if self.attn_quantizer is not None:
-        #     attention = self.attn_quantizer(attention)
-
-        # 5. Context Vector Calculation
-        # PyTorch: "nhql,nlhc->nqhc"
-        out = ops.einsum("nhql,nlhc->nqhc", attention, values)
-
-        # 5.5 Context Requantization Boundary
-        if self.out_quantizer is not None:
-            out = self.out_quantizer(out)
-
-        # 6. Re-combine heads and Final Projection
-        out = ops.reshape(out, (batch_size, seq_len, self.latent_dim))
-        out = self.out_proj(out)
-        if self.quantize:
-            out = self.residual_align_norm(out, training=training)
-
-        # 7. Residual Connection
-        return self.q_add([out, residual])
-        # return out + residual
+    # 8. Residual Addition
+    add_cls = QAdd if quantize else keras.layers.Add
+    return add_cls(name=f"{prefix}_residual_add")([out, residual])
