@@ -1,13 +1,8 @@
 import keras
 from hgq.layers import QDense, Quantizer
 
-def apply_hgq_embedding(
-    x,
-    in_dim,
-    embedding_dim,
-    quantize=True,
-    prefix="embedding"
-):
+
+def apply_hgq_embedding(x, in_dim, embedding_dim, quantize=True, prefix="embedding"):
     parity_initializer = keras.initializers.VarianceScaling(
         scale=1 / 3, mode="fan_in", distribution="uniform"
     )

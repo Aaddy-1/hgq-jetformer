@@ -6,8 +6,10 @@ from hgq.layers import QBatchNormalization, Quantizer
 from ..layers.embedding import apply_hgq_embedding
 from ..layers.transformer import apply_hgq_transformer_block
 
+
 class PrependCLSToken(keras.layers.Layer):
     """Isolated trainable parameter layer to avoid subclassing the main model."""
+
     def __init__(self, embed_dim, **kwargs):
         super().__init__(**kwargs)
         self.embed_dim = embed_dim
@@ -26,6 +28,7 @@ class PrependCLSToken(keras.layers.Layer):
         cls_tokens = ops.broadcast_to(self.cls_token, (batch_size, 1, self.embed_dim))
         return ops.concatenate([cls_tokens, x], axis=1)
 
+
 def build_hgq_jetformer(
     in_dim=16,
     embed_dim=128,
@@ -42,14 +45,14 @@ def build_hgq_jetformer(
     inputs = keras.Input(shape=(num_particles, in_dim), name="input_particles")
 
     # 2. Input Embedding
-    # Note: Preserving your original logic where the embedding is unquantized 
+    # Note: Preserving your original logic where the embedding is unquantized
     # if you explicitly pass quantize=False, otherwise it follows the global flag.
     x = apply_hgq_embedding(
         inputs,
         in_dim=in_dim,
         embedding_dim=embed_dim,
-        quantize=False, # Match your original HGQJetFormer hardcoded value, or change to `quantize`
-        prefix="embedding"
+        quantize=False,  # Match your original HGQJetFormer hardcoded value, or change to `quantize`
+        prefix="embedding",
     )
 
     # 3. Prepare and Prepend CLS token
@@ -66,11 +69,11 @@ def build_hgq_jetformer(
             latent_dim=embed_dim,
             num_heads=num_heads,
             dropout=dropout,
-            num_particles=num_particles, 
+            num_particles=num_particles,
             activation=activation,
             normalization=normalization,
             quantize=quantize,
-            block_name=f"transformer_block_{i}"
+            block_name=f"transformer_block_{i}",
         )
 
     # 5. Extract CLS token output (Index 0)
@@ -95,7 +98,7 @@ def build_hgq_jetformer(
     parity_initializer = keras.initializers.VarianceScaling(
         scale=1 / 3, mode="fan_in", distribution="uniform"
     )
-    
+
     dense_cls = keras.layers.Dense
     logits = dense_cls(
         num_classes,

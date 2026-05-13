@@ -47,16 +47,14 @@ def apply_hgq_self_attention(
     keys = ops.reshape(keys, (batch_size, seq_len, num_heads, head_dim))
     values = ops.reshape(values, (batch_size, seq_len, num_heads, head_dim))
 
-    # 4. Energy Calculation & Scaling via native QEinsum
-    # 4. Energy Calculation & Scaling
-    if quantize:
-        energy = QEinsum("nqhc,nkhc->nhqk", name=f"{prefix}_energy_einsum")([queries, keys])
-    else:
-        energy = keras.layers.Lambda(
-            lambda inputs: ops.einsum("nqhc,nkhc->nhqk", inputs[0], inputs[1]),
-            name=f"{prefix}_energy_einsum"
-        )([queries, keys])
-        
+    # 4. Energy Calculation & Scaling (Deterministic MatMul)
+    # Transpose to (batch_size, num_heads, seq_len, head_dim)
+    q_t = ops.transpose(queries, axes=(0, 2, 1, 3))
+    # Transpose to (batch_size, num_heads, head_dim, seq_len)
+    k_t = ops.transpose(keys, axes=(0, 2, 3, 1))
+    
+    # Matmul: (B, H, Q, C) @ (B, H, C, K) -> (B, H, Q, K)
+    energy = ops.matmul(q_t, k_t)
     scaled_energy = energy * inv_scale
 
     if quantize:
@@ -66,14 +64,15 @@ def apply_hgq_self_attention(
     softmax_cls = QSoftmax if quantize else keras.layers.Softmax
     attention = softmax_cls(axis=-1, name=f"{prefix}_softmax")(scaled_energy)
 
-    # 5. Context Vector Calculation via native QEinsum
-    if quantize:
-        out = QEinsum("nhql,nlhc->nqhc", name=f"{prefix}_context_einsum")([attention, values])
-    else:
-        out = keras.layers.Lambda(
-            lambda inputs: ops.einsum("nhql,nlhc->nqhc", inputs[0], inputs[1]),
-            name=f"{prefix}_context_einsum"
-        )([attention, values])
+    # 5. Context Vector Calculation (Deterministic MatMul)
+    # Transpose to (batch_size, num_heads, seq_len, head_dim)
+    v_t = ops.transpose(values, axes=(0, 2, 1, 3))
+    
+    # Matmul: (B, H, Q, L) @ (B, H, L, C) -> (B, H, Q, C)
+    out = ops.matmul(attention, v_t)
+    
+    # Transpose back to (batch_size, seq_len, num_heads, head_dim)
+    out = ops.transpose(out, axes=(0, 2, 1, 3))
 
     if quantize:
         out = Quantizer(name=f"{prefix}_out_quantizer")(out)
