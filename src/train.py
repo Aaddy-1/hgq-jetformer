@@ -23,7 +23,9 @@ from src.dataset import JetFormerDataGenerator
 from src.models.jetformer import build_hgq_jetformer
 from src.onecyclelr import OneCycleLR
 from hgq.utils.sugar.beta_pid import BetaPID
-from hgq.regularizers import MonoL1
+
+# from hgq.regularizers import MonoL1
+from hgq.utils.sugar import FreeEBOPs
 
 # Resolves to the 'src' directory
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -279,6 +281,9 @@ def train(
                 monitor="val_loss", factor=0.8, patience=5, min_lr=1e-4
             )
         )
+
+        # ebops = FreeEBOPs()
+        # callbacks.append(ebops)
 
         if quantize:
             callbacks.append(BetaPID(target_ebops=350000.0, warmup=5))
