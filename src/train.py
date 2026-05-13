@@ -23,7 +23,7 @@ from src.dataset import JetFormerDataGenerator
 from src.models.jetformer import build_hgq_jetformer
 from src.onecyclelr import OneCycleLR
 from hgq.utils.sugar.beta_pid import BetaPID
-
+from hgq.regularizers import MonoL1
 
 # Resolves to the 'src' directory
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -91,19 +91,17 @@ def setup_data_generators(num_particles, num_feats, batch_size, val_ratio=0.1):
 
     return train_gen, val_gen, test_gen
 
+
 def save_final_evaluation(acc, class_accs, aucs, classes, filepath):
     """
     Serializes test set metrics to a JSON file.
     """
-    results = {
-        "overall_accuracy": float(acc),
-        "per_class_metrics": {}
-    }
+    results = {"overall_accuracy": float(acc), "per_class_metrics": {}}
 
     for i, class_name in enumerate(classes):
         results["per_class_metrics"][class_name] = {
             "accuracy": float(class_accs[i]) if not np.isnan(class_accs[i]) else None,
-            "auc": float(aucs[i]) if aucs[i] is not None else None
+            "auc": float(aucs[i]) if aucs[i] is not None else None,
         }
 
     with open(filepath, "w") as f:
@@ -214,7 +212,7 @@ def train(
     else:
         current_model_dir = MODEL_DIR
         current_output_dir = OUTPUT_DIR
-    
+
     if quantize:
         current_model_dir = os.path.join(current_model_dir, "quantized")
         current_output_dir = os.path.join(current_output_dir, "quantized")
@@ -224,11 +222,15 @@ def train(
 
     total_steps = len(train_gen) * num_epochs
     # lr_schedule = build_lr_schedule(max_lr=1e-3, total_steps=total_steps)
-    optimizer = keras.optimizers.AdamW(learning_rate=1e-3, weight_decay=1e-4, global_clipnorm=1.0)
+    optimizer = keras.optimizers.AdamW(
+        learning_rate=1e-3, weight_decay=1e-4, global_clipnorm=1.0
+    )
 
     # Instantiate scopes BEFORE the context manager
-    quant_scope = QuantizerConfigScope(place='all', default_q_type='kbi', overflow_mode='WRAP')
-    layer_scope = LayerConfigScope(enable_ebops=True, beta0=1e-11)
+    quant_scope = QuantizerConfigScope(
+        place="all", default_q_type="kbi", overflow_mode="SAT_SYM"
+    )
+    layer_scope = LayerConfigScope(enable_ebops=True, beta0=5e-8)
 
     # Wrap model instantiation and training in HGQ2 Scopes
     with quant_scope, layer_scope:
@@ -270,30 +272,26 @@ def train(
                     restore_best_weights=True,
                 )
             )
-        
+
         # Add this inside your training block before model.fit()
         callbacks.append(
             keras.callbacks.ReduceLROnPlateau(
-                monitor="val_loss",
-                factor=0.8,
-                patience=5,
-                min_lr=1e-4
+                monitor="val_loss", factor=0.8, patience=5, min_lr=1e-4
             )
         )
 
         if quantize:
-            callbacks.append(
-                BetaPID(
-                    target_ebops=350000.0,
-                    warmup=10
-                )
-            )
+            callbacks.append(BetaPID(target_ebops=350000.0, warmup=5))
 
         if save:
             if model_path is None:
-                model_path = os.path.join(current_model_dir, f"{num_particles}_{num_feats}f.keras")
+                model_path = os.path.join(
+                    current_model_dir, f"{num_particles}_{num_feats}f.keras"
+                )
             # Initialize eval path here to ensure global function scope
-            eval_results_path = os.path.join(current_output_dir, f"{num_particles}_{num_feats}f_metrics.json")
+            eval_results_path = os.path.join(
+                current_output_dir, f"{num_particles}_{num_feats}f_metrics.json"
+            )
             callbacks.append(
                 keras.callbacks.ModelCheckpoint(
                     filepath=model_path, monitor="val_loss", save_best_only=True
@@ -305,7 +303,10 @@ def train(
                 f"Starting training for {num_particles} particles, {num_feats} features with early stopping {early_stopping_patience} and {'with' if quantize else 'without'} quantization ... "
             )
             history = model.fit(
-                train_gen, validation_data=val_gen, epochs=num_epochs, callbacks=callbacks
+                train_gen,
+                validation_data=val_gen,
+                epochs=num_epochs,
+                callbacks=callbacks,
             )
 
             if save:
@@ -317,14 +318,14 @@ def train(
                     plot_path = os.path.join(
                         current_output_dir, f"{num_particles}_{num_feats}f_plot.png"
                     )
-            
+
                 save_loss_acc(history.history, num_particles, num_feats, output_path)
                 plot_loss_acc(history.history, num_particles, num_feats, plot_path)
-        
+
         # Post-Training Activation Profiling for WRAP mode safety
         # if quantize:
         #     print("\nProfiling activations for WRAP mode bit allocation...")
-            
+
         #     # 1. Define a symbolic Keras Input matching the batch geometry
         #     symbolic_input = keras.Input(shape=(num_particles, num_feats), name="profiler_input")
 
@@ -362,11 +363,7 @@ def train(
         # Persist to disk
         if save:
             save_final_evaluation(
-                test_acc, 
-                test_class_accs, 
-                test_aucs, 
-                CLASSES, 
-                eval_results_path
+                test_acc, test_class_accs, test_aucs, CLASSES, eval_results_path
             )
             print(f"Final metrics saved to: {eval_results_path}")
 
@@ -375,16 +372,35 @@ def train(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train HGQJetFormer")
-    parser.add_argument("--num_particles", type=int, default=8, help="Number of jet constituents")
-    parser.add_argument("--num_feats", type=int, default=3, choices=[3, 16], help="Number of features per constituent")
-    parser.add_argument("--num_epochs", type=int, default=25, help="Total training epochs")
-    parser.add_argument("--batch_size", type=int, default=256, help="Training batch size")
-    parser.add_argument("--experiment", type=str, default=None, help="Name of the experiment folder")
-    parser.add_argument("--quantize", action=argparse.BooleanOptionalAction, default=True, help="Enable HGQ2 quantization")
+    parser.add_argument(
+        "--num_particles", type=int, default=8, help="Number of jet constituents"
+    )
+    parser.add_argument(
+        "--num_feats",
+        type=int,
+        default=3,
+        choices=[3, 16],
+        help="Number of features per constituent",
+    )
+    parser.add_argument(
+        "--num_epochs", type=int, default=25, help="Total training epochs"
+    )
+    parser.add_argument(
+        "--batch_size", type=int, default=256, help="Training batch size"
+    )
+    parser.add_argument(
+        "--experiment", type=str, default=None, help="Name of the experiment folder"
+    )
+    parser.add_argument(
+        "--quantize",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable HGQ2 quantization",
+    )
     args = parser.parse_args()
 
     train(
-        num_particles=args.num_particles, 
+        num_particles=args.num_particles,
         num_feats=args.num_feats,
         num_epochs=args.num_epochs,
         batch_size=args.batch_size,
@@ -392,5 +408,5 @@ if __name__ == "__main__":
         early_stopping_patience=15,  # Enforced 0 to allow OneCycleLR decay phase
         val_ratio=0.1,
         experiment=args.experiment,
-        quantize=args.quantize
+        quantize=args.quantize,
     )
