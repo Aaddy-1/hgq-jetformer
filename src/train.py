@@ -94,11 +94,15 @@ def setup_data_generators(num_particles, num_feats, batch_size, val_ratio=0.1):
     return train_gen, val_gen, test_gen
 
 
-def save_final_evaluation(acc, class_accs, aucs, classes, filepath):
+def save_final_evaluation(acc, class_accs, aucs, classes, filepath, total_ebops=None):
     """
     Serializes test set metrics to a JSON file.
     """
-    results = {"overall_accuracy": float(acc), "per_class_metrics": {}}
+    results = {
+        "overall_accuracy": float(acc),
+        "total_ebops": float(total_ebops) if total_ebops is not None else "N/A",
+        "per_class_metrics": {},
+    }
 
     for i, class_name in enumerate(classes):
         results["per_class_metrics"][class_name] = {
@@ -353,22 +357,37 @@ def train(
         #     # trace_minmax(functional_model, train_gen)
 
         print("\nLoading Best Checkpoint Weights...")
-        # Explicitly restore the optimal weights saved by ModelCheckpoint
         if save and model_path is not None:
             model.load_weights(model_path)
 
         print("\nExecuting Inference on Test Set...")
-        outputs = model.predict(test_gen)
 
-        # Extract true labels directly from the un-shuffled generator
+        # 1. Trigger Keras evaluation to populate and return all tracked metrics (including EBOPs)
+        keras_metrics = model.evaluate(test_gen, return_dict=True, verbose=1)
+
+        # Look for the exact key the framework uses (usually 'ebops' or 'EBOPs')
+        final_ebops = next(
+            (value for key, value in keras_metrics.items() if "ebops" in key.lower()),
+            None,
+        )
+        if final_ebops is not None:
+            print(f"\nFinal Best-Model Complexity: {final_ebops:,.0f} EBOPs")
+
+        # 2. Generate raw predictions for your custom sklearn evaluation
+        outputs = model.predict(test_gen)
         labels = np.concatenate([y for _, y in test_gen], axis=0)
 
         test_acc, test_class_accs, test_aucs = evaluate(outputs, labels, CLASSES)
 
-        # Persist to disk
+        # 3. Persist to disk
         if save:
             save_final_evaluation(
-                test_acc, test_class_accs, test_aucs, CLASSES, eval_results_path
+                test_acc,
+                test_class_accs,
+                test_aucs,
+                CLASSES,
+                eval_results_path,
+                total_ebops=final_ebops,
             )
             print(f"Final metrics saved to: {eval_results_path}")
 
