@@ -44,45 +44,45 @@ def apply_hgq_transformer_block(
     # handles the softmax, and manages internal Quantizer traces perfectly.
     attn_cls = QMultiHeadAttention if quantize else keras.layers.MultiHeadAttention
 
-    # # This is the custom mhaconfig scope for the MHA layers
-    # mhaconfig = QuantizerConfigScope(
-    #     k0=1,
-    #     i0=1,
-    #     f0=6,
-    #     round_mode="RND",
-    #     overflow_mode="SAT",
-    #     bc=MinMax(1, 8),
-    # )
+    # This is the custom mhaconfig scope for the MHA layers
+    mhaconfig = QuantizerConfigScope(
+        k0=1,
+        i0=1,
+        f0=6,
+        round_mode="RND",
+        overflow_mode="SAT",
+        bc=MinMax(1, 8),
+    )
 
-    # if quantize:
-    #     with mhaconfig:
-    #         attn_out = attn_cls(
-    #             num_heads=num_heads,
-    #             key_dim=head_dim,
-    #             value_dim=head_dim,
-    #             output_shape=in_dim,
-    #             name=f"{block_name}_q_attention",
-    #         )(norm_x, norm_x, training=training)
-    # else:
-    #     attn_out = attn_cls(
-    #         num_heads=num_heads,
-    #         key_dim=head_dim,
-    #         value_dim=head_dim,
-    #         output_shape=in_dim,
-    #         name=f"{block_name}_q_attention",
-    #     )(norm_x, norm_x, training=training)
+    if quantize:
+        with mhaconfig:
+            attn_out = attn_cls(
+                num_heads=num_heads,
+                key_dim=head_dim,
+                value_dim=head_dim,
+                output_shape=in_dim,
+                name=f"{block_name}_q_attention",
+            )(norm_x, norm_x, training=training)
+    else:
+        attn_out = attn_cls(
+            num_heads=num_heads,
+            key_dim=head_dim,
+            value_dim=head_dim,
+            output_shape=in_dim,
+            name=f"{block_name}_q_attention",
+        )(norm_x, norm_x, training=training)
 
-    attn_out = attn_cls(
-        num_heads=num_heads,
-        key_dim=head_dim,
-        value_dim=head_dim,
-        output_shape=in_dim,
-        name=f"{block_name}_q_attention",
-    )(norm_x, norm_x, training=training)
+    # attn_out = attn_cls(
+    #     num_heads=num_heads,
+    #     key_dim=head_dim,
+    #     value_dim=head_dim,
+    #     output_shape=in_dim,
+    #     name=f"{block_name}_q_attention",
+    # )(norm_x, norm_x, training=training)
 
-    # if quantize:
-    #     # Establishes strict fractional geometry for the tiny attention update without scaling variance
-    #     attn_out = Quantizer(name=f"{block_name}_attn_fract_align")(attn_out)
+    if quantize:
+        # Establishes strict fractional geometry for the tiny attention update without scaling variance
+        attn_out = Quantizer(name=f"{block_name}_attn_fract_align")(attn_out)
 
     # 3. First Residual Connection (attn_out = self_attention(x) + x)
     add_cls = QAdd if quantize else keras.layers.Add
