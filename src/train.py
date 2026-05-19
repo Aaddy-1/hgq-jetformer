@@ -25,6 +25,7 @@ from src.onecyclelr import OneCycleLR
 from hgq.utils.sugar.beta_pid import BetaPID
 
 # from hgq.regularizers import MonoL1
+from hgq.regularizers import MonoL1
 from hgq.utils.sugar import FreeEBOPs
 
 # Resolves to the 'src' directory
@@ -233,13 +234,21 @@ def train(
     )
 
     # Instantiate scopes BEFORE the context manager
-    quant_scope = QuantizerConfigScope(
-        place="all", default_q_type="kbi", overflow_mode="WRAP"
+    # quant_scope = QuantizerConfigScope(
+    #     place="all", default_q_type="kbi", overflow_mode="WRAP"
+    # )
+    # layer_scope = LayerConfigScope(enable_ebops=True, beta0=5e-8)
+
+    scope0 = QuantizerConfigScope(
+        k0=1, b0=8, i0=1, br=MonoL1(1e-8), overflow_mode="WRAP"
     )
-    layer_scope = LayerConfigScope(enable_ebops=True, beta0=5e-8)
+    scope1 = QuantizerConfigScope(
+        place="datalane", k0=1, f0=6, fr=MonoL1(1e-8), ir=MonoL1(1e-8)
+    )
+    betascope = LayerConfigScope(beta0=5e-8)
 
     # Wrap model instantiation and training in HGQ2 Scopes
-    with quant_scope, layer_scope:
+    with scope0, scope1, betascope:
 
         # 1. Instantiate the Statically Traceable Graph
         model = build_hgq_jetformer(
