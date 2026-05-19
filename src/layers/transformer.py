@@ -80,9 +80,9 @@ def apply_hgq_transformer_block(
     #     name=f"{block_name}_q_attention",
     # )(norm_x, norm_x, training=training)
 
-    if quantize:
-        # Establishes strict fractional geometry for the tiny attention update without scaling variance
-        attn_out = Quantizer(name=f"{block_name}_attn_fract_align")(attn_out)
+    # if quantize:
+    #     # Establishes strict fractional geometry for the tiny attention update without scaling variance
+    #     attn_out = Quantizer(name=f"{block_name}_attn_fract_align")(attn_out)
 
     # 3. First Residual Connection (attn_out = self_attention(x) + x)
     add_cls = QAdd if quantize else keras.layers.Add
@@ -103,9 +103,9 @@ def apply_hgq_transformer_block(
     )
 
     # 5. Asymmetric Radix Alignment & Second Residual Connection
-    if quantize:
-        # Establishes strict fractional geometry for the tiny FFN update without scaling variance
-        ffn_out = Quantizer(name=f"{block_name}_ffn_fract_align")(ffn_out)
+    # if quantize:
+    #     # Establishes strict fractional geometry for the tiny FFN update without scaling variance
+    #     ffn_out = Quantizer(name=f"{block_name}_ffn_fract_align")(ffn_out)
 
     # 5. Second Residual Connection (out = ffn(attn_out) + attn_out)
     res_out = add_cls(name=f"{block_name}_ffn_residual")([ffn_out, res_x])
