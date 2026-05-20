@@ -2,6 +2,7 @@ import keras
 from hgq.layers import QAdd, QBatchNormalization, QMultiHeadAttention, Quantizer
 from hgq.config import QuantizerConfigScope
 from hgq.constraints import MinMax
+from hgq.regularizers import MonoL1
 
 # Assuming you have imported your new functional definitions:
 # from .attention import apply_hgq_self_attention
@@ -27,9 +28,7 @@ def apply_hgq_transformer_block(
 
     # 1. Pre-Normalization (Replacing the internal norm of HGQSelfAttention)
     if quantize:
-        norm_x = QBatchNormalization(
-            axis=-1, epsilon=1e-5, name=f"{block_name}_attn_norm"
-        )(x, training=training)
+        norm_x = x
     elif normalization == "Batch":
         norm_x = keras.layers.BatchNormalization(
             axis=-1, momentum=momentum, epsilon=1e-5, name=f"{block_name}_attn_norm"
@@ -51,6 +50,9 @@ def apply_hgq_transformer_block(
         f0=6,
         round_mode="RND",
         overflow_mode="SAT",
+        br=MonoL1(1e-5),  # Added: Weight compression
+        fr=MonoL1(1e-5),  # Added: Fractional compression
+        ir=MonoL1(1e-5),  # Added: Integer compression
         bc=MinMax(1, 8),
     )
 
