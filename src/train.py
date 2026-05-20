@@ -27,6 +27,7 @@ from hgq.utils.sugar.beta_pid import BetaPID
 # from hgq.regularizers import MonoL1
 from hgq.regularizers import MonoL1
 from hgq.utils.sugar import FreeEBOPs
+from hgq.constraints import MinMax
 
 # Resolves to the 'src' directory
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -240,12 +241,12 @@ def train(
     # layer_scope = LayerConfigScope(enable_ebops=True, beta0=5e-8)
 
     scope0 = QuantizerConfigScope(
-        k0=1, b0=8, i0=1, br=MonoL1(1e-8), overflow_mode="WRAP"
+        k0=1, b0=8, i0=1, br=MonoL1(1e-5), overflow_mode="WRAP", bc=MinMax(1, 8)
     )
     scope1 = QuantizerConfigScope(
-        place="datalane", k0=1, f0=6, fr=MonoL1(1e-8), ir=MonoL1(1e-8)
+        place="datalane", k0=1, f0=6, fr=MonoL1(1e-5), ir=MonoL1(1e-5), bc=MinMax(1, 8)
     )
-    betascope = LayerConfigScope(beta0=5e-8)
+    betascope = LayerConfigScope(enable_ebops=True, beta0=5e-8)
 
     # Wrap model instantiation and training in HGQ2 Scopes
     with scope0, scope1, betascope:
