@@ -228,7 +228,7 @@ def train(
 
     # Instantiate scopes BEFORE the context manager
     quant_scope = QuantizerConfigScope(
-        place="all", default_q_type="kbi", overflow_mode="SAT_SYM"
+        place="all", default_q_type="kbi", overflow_mode="SAT_SYM", MonoL1=MonoL1(1e-5)
     )
     layer_scope = LayerConfigScope(enable_ebops=True, beta0=5e-8)
 
@@ -281,7 +281,7 @@ def train(
         )
 
         if quantize:
-            callbacks.append(BetaPID(target_ebops=350000.0, warmup=5))
+            callbacks.append(BetaPID(p=1, i=0.1, d=0, target_ebops=350000.0, warmup=5))
 
         if save:
             if model_path is None:

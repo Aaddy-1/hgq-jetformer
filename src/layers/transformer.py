@@ -25,9 +25,10 @@ def apply_hgq_transformer_block(
 
     # 1. Pre-Normalization (Replacing the internal norm of HGQSelfAttention)
     if quantize:
-        norm_x = QBatchNormalization(
-            axis=-1, epsilon=1e-5, name=f"{block_name}_attn_norm"
-        )(x, training=training)
+        # norm_x = QBatchNormalization(
+        #     axis=-1, epsilon=1e-5, name=f"{block_name}_attn_norm"
+        # )(x, training=training)
+        norm_x = x
     elif normalization == "Batch":
         norm_x = keras.layers.BatchNormalization(
             axis=-1, momentum=momentum, epsilon=1e-5, name=f"{block_name}_attn_norm"
