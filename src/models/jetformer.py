@@ -82,7 +82,8 @@ def build_hgq_jetformer(
 
     # 6. Final Normalization
     if quantize:
-        cls_out = QBatchNormalization(axis=-1, name="final_norm", epsilon=1e-5)(cls_out)
+        # cls_out = QBatchNormalization(axis=-1, name="final_norm", epsilon=1e-5)(cls_out)
+        cls_out = cls_out
     elif normalization == "Batch":
         cls_out = keras.layers.BatchNormalization(
             axis=-1, name="final_norm", momentum=0.9, epsilon=1e-5

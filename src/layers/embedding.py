@@ -16,7 +16,7 @@ def apply_hgq_embedding(x, in_dim, embedding_dim, quantize=True, prefix="embeddi
         name=f"{prefix}_projection",
     )(x)
 
-    if quantize:
-        x = Quantizer(name=f"{prefix}_quantizer")(x)
+    # if quantize:
+    #     x = Quantizer(name=f"{prefix}_quantizer")(x)
 
     return x
