@@ -228,7 +228,7 @@ def train(
 
     # Instantiate scopes BEFORE the context manager
     quant_scope = QuantizerConfigScope(
-        place="all", default_q_type="kbi", overflow_mode="SAT_SYM", MonoL1=MonoL1(1e-5)
+        place="all", default_q_type="kbi", overflow_mode="SAT_SYM", br=MonoL1(1e-7)
     )
     layer_scope = LayerConfigScope(enable_ebops=True, beta0=5e-8)
 
