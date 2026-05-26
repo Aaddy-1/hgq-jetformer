@@ -323,29 +323,18 @@ def train(
                 plot_loss_acc(history.history, num_particles, num_feats, plot_path)
 
         # Post-Training Activation Profiling for WRAP mode safety
-        # if quantize:
-        #     print("\nProfiling activations for WRAP mode bit allocation...")
+        if quantize:
+            print(
+                "\n[HGQ] Initiating activation profiling for WRAP mode calibration..."
+            )
 
-        #     # 1. Define a symbolic Keras Input matching the batch geometry
-        #     symbolic_input = keras.Input(shape=(num_particles, num_feats), name="profiler_input")
+            x_calib = np.concatenate(
+                [next(iter(train_gen))[0] for _ in range(10)], axis=0
+            )
 
-        #     # 2. Route the symbolic input through the trained subclassed model
-        #     symbolic_output = model(symbolic_input)
-
-        #     # 3. Instantiate a strict Functional Model wrapper to expose the .outputs attribute
-        #     functional_model = keras.Model(inputs=symbolic_input, outputs=symbolic_output)
-
-        #     # Create a small subset generator for profiling
-        #     def profiler_generator(gen, steps=10):
-        #         iterator = iter(gen)
-        #         for _ in range(steps):
-        #             yield next(iterator)
-
-        #     # Execute the profiler on a fraction of the data
-        #     trace_minmax(functional_model, profiler_generator(train_gen, steps=10))
-
-        #     # # 4. Execute the HGQ profiler on the wrapped graph
-        #     # trace_minmax(functional_model, train_gen)
+            # 2. Calibrate the integer boundaries
+            trace_minmax(model, x_calib)
+            print("[HGQ] Profiling complete. Integer boundaries securely calibrated.")
 
         print("\nLoading Best Checkpoint Weights...")
         # Explicitly restore the optimal weights saved by ModelCheckpoint
@@ -394,7 +383,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--quantize",
         action=argparse.BooleanOptionalAction,
-        default=True,
+        default=False,
         help="Enable HGQ2 quantization",
     )
     args = parser.parse_args()
