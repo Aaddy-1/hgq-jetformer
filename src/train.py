@@ -322,6 +322,11 @@ def train(
                 save_loss_acc(history.history, num_particles, num_feats, output_path)
                 plot_loss_acc(history.history, num_particles, num_feats, plot_path)
 
+        print("\nLoading Best Checkpoint Weights...")
+        # Explicitly restore the optimal weights saved by ModelCheckpoint
+        if save and model_path is not None:
+            model.load_weights(model_path)
+
         # Post-Training Activation Profiling for WRAP mode safety
         if quantize:
             print(
@@ -335,11 +340,6 @@ def train(
             # 2. Calibrate the integer boundaries
             trace_minmax(model, x_calib)
             print("[HGQ] Profiling complete. Integer boundaries securely calibrated.")
-
-        print("\nLoading Best Checkpoint Weights...")
-        # Explicitly restore the optimal weights saved by ModelCheckpoint
-        if save and model_path is not None:
-            model.load_weights(model_path)
 
         print("\nExecuting Inference on Test Set...")
         outputs = model.predict(test_gen)
@@ -355,6 +355,26 @@ def train(
                 test_acc, test_class_accs, test_aucs, CLASSES, eval_results_path
             )
             print(f"Final metrics saved to: {eval_results_path}")
+
+        # --- 4. ALKAID NATIVE ALIR TRACING ---
+        if quantize:
+            from alkaid.converter import trace_model
+            from alkaid.codegen import RTLModel
+
+            print("\n[Alkaid] Tracing quantized Keras graph to ALIR...")
+            # Replay the natively loaded HGQ model operations onto symbolic tensors
+            inp, out = trace_model(model)
+
+            print("[Alkaid] Generating Verilog RTL via static dataflow...")
+            rtl = RTLModel(inp, out, latency_cutoff=5)
+
+            # Ensure the output directory exists
+            rtl_out_path = os.path.join(current_output_dir, "rtl_prj")
+            os.makedirs(rtl_out_path, exist_ok=True)
+
+            # Write out the raw hardware description
+            rtl.write(rtl_out_path)
+            print(f"[Alkaid] Hardware synthesis complete. RTL saved to: {rtl_out_path}")
 
         # evaluate(outputs, labels, CLASSES)
 
