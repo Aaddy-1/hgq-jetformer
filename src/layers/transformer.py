@@ -73,10 +73,10 @@ def apply_hgq_transformer_block(
         training=training,
     )
 
-    # 5. Asymmetric Radix Alignment & Second Residual Connection
-    if quantize:
-        # Establishes strict fractional geometry for the tiny FFN update without scaling variance
-        ffn_out = Quantizer(name=f"{block_name}_ffn_fract_align")(ffn_out)
+    # # 5. Asymmetric Radix Alignment & Second Residual Connection
+    # if quantize:
+    #     # Establishes strict fractional geometry for the tiny FFN update without scaling variance
+    #     ffn_out = Quantizer(name=f"{block_name}_ffn_fract_align")(ffn_out)
 
     # 5. Second Residual Connection (out = ffn(attn_out) + attn_out)
     res_out = add_cls(name=f"{block_name}_ffn_residual")([ffn_out, res_x])
