@@ -1,5 +1,6 @@
 import keras
 from keras import ops
+from keras import layers
 from hgq.layers import QBatchNormalization, Quantizer
 
 # Assuming imports from your architecture definitions:
@@ -7,6 +8,7 @@ from ..layers.embedding import apply_hgq_embedding
 from ..layers.transformer import apply_hgq_transformer_block
 
 
+@keras.saving.register_keras_serializable()
 class PrependCLSToken(keras.layers.Layer):
     """Isolated trainable parameter layer to avoid subclassing the main model."""
 
@@ -51,12 +53,32 @@ def build_hgq_jetformer(
         inputs,
         in_dim=in_dim,
         embedding_dim=embed_dim,
-        quantize=False,  # Match your original HGQJetFormer hardcoded value, or change to `quantize`
+        quantize=quantize,  # Match your original HGQJetFormer hardcoded value, or change to `quantize`
         prefix="embedding",
     )
 
     # 3. Prepare and Prepend CLS token
-    x = PrependCLSToken(embed_dim, name="cls_token_injection")(x)
+    # Extract a single spatial token to capture the dynamic batch dimension natively.
+    # Shape becomes: (Batch, 1, embed_dim)
+    dummy_slice = x[:, 0:1, :]
+
+    # Nullify the slice. Keras translates this cleanly to an ops.multiply node.
+    # Shape remains: (Batch, 1, embed_dim), but all values are 0.0
+    zero_slice = dummy_slice * 0.0
+
+    # Inject the trainable CLS parameter via a standard Dense bias.
+    # The kernel multiplication evaluates to zero; only the bias (the CLS token) remains.
+    cls_tokens = layers.Dense(
+        units=embed_dim,
+        use_bias=True,
+        kernel_initializer="zeros",
+        bias_initializer="random_normal",
+        trainable=True,
+        name="cls_token_weight",
+    )(zero_slice)
+
+    # Prepend the token to the sequence
+    x = layers.Concatenate(axis=1, name="cls_token_injection")([cls_tokens, x])
 
     if quantize:
         x = Quantizer(name="entry_quantizer")(x)
@@ -78,7 +100,15 @@ def build_hgq_jetformer(
 
     # 5. Extract CLS token output (Index 0)
     # Lambda layer ensures the slicing operation is named and traceable
-    cls_out = keras.layers.Lambda(lambda z: z[:, 0, :], name="extract_cls")(x)
+    # Native topological slicing.
+    # Keras automatically translates this into a static, serializable Slice op.
+    raw_slice = x[:, 0, :]
+
+    # Anchor the structural name for Alkaid's routing trace.
+    # The 'linear' activation is a mathematical identity (f(x) = x).
+    # It incurs zero hardware cost and will be optimized out by Alkaid
+    # while preserving the "extract_cls" boundary marker in the netlist.
+    cls_out = keras.layers.Activation("linear", name="extract_cls")(raw_slice)
 
     # 6. Final Normalization
     if quantize:
