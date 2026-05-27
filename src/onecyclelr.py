@@ -31,6 +31,7 @@ class OneCycleLR(keras.optimizers.schedules.LearningRateSchedule):
         self.step_size_down = self.total_steps - self.step_size_up
 
     def __call__(self, step):
+        step = keras.ops.cast(step, "float32")
         pi_tensor = ops.cast(math.pi, dtype=step.dtype)
         step = ops.cast(step, dtype="float32")
         total_steps = ops.cast(self.total_steps, dtype="float32")

@@ -1,95 +1,73 @@
 import keras
-from hgq.layers import QDense
+from hgq.layers import QDense, QBatchNormalization, Quantizer
 
 
-@keras.saving.register_keras_serializable()
-class HGQFeedForward(keras.layers.Layer):
-    """
-    Position-wise feed-forward layer with HGQ2 integration.
-    Replicates the 'Double-Norm' structure from the reference design.
-    """
+def apply_hgq_feed_forward(
+    x,
+    in_dim,
+    multiplication=2,
+    activation="ReLU",
+    normalization="Layer",
+    momentum=0.9,
+    quantize=True,
+    prefix="ffn",
+    training=False,
+):
+    hidden_dim = in_dim * multiplication
+    dense_cls = QDense if quantize else keras.layers.Dense
+    activation_fn = keras.activations.get(activation.lower())
 
-    def __init__(
-        self,
+    parity_initializer = keras.initializers.VarianceScaling(
+        scale=1 / 3, mode="fan_in", distribution="uniform"
+    )
+
+    def apply_norm(tensor, name_suffix):
+        if quantize:
+            # return QBatchNormalization(
+            #     axis=-1, epsilon=1e-5, name=f"{prefix}_{name_suffix}"
+            # )(tensor, training=training)
+            return tensor
+        if normalization == "Batch":
+            return keras.layers.BatchNormalization(
+                axis=-1, momentum=momentum, epsilon=1e-5, name=f"{prefix}_{name_suffix}"
+            )(tensor, training=training)
+        else:
+            return keras.layers.LayerNormalization(
+                axis=-1, name=f"{prefix}_{name_suffix}"
+            )(tensor)
+
+    # Block 1: Norm -> Linear (Expansion) -> Activation
+    x = apply_norm(x, "norm1")
+    x = dense_cls(
+        hidden_dim,
+        use_bias=False,
+        kernel_initializer=parity_initializer,
+        name=f"{prefix}_expand",
+    )(x)
+
+    if quantize:
+        x = Quantizer(name=f"{prefix}_lut_in_1")(x)  # Bounds the LUT Address Space
+
+    x = activation_fn(x)
+
+    if quantize:
+        x = Quantizer(name=f"{prefix}_lut_out_1")(x)  # Bounds the LUT Value Space
+
+    # Block 2: Norm -> Linear (Contraction) -> Activation
+    x = apply_norm(x, "norm2")
+    x = dense_cls(
         in_dim,
-        multiplication=2,
-        activation="ReLU",
-        normalization="Layer",
-        momentum=0.9,
-        quantize=True,
-        **kwargs
-    ):
-        super().__init__(**kwargs)
-        self.in_dim = in_dim
-        self.multiplication = multiplication
-        self.activation = activation
-        self.normalization = normalization
-        self.momentum = momentum
-        self.quantize = quantize
+        use_bias=False,
+        kernel_initializer=parity_initializer,
+        name=f"{prefix}_contract",
+    )(x)
 
-        # Internal dimension: expansion factor
-        hidden_dim = in_dim * multiplication
+    if quantize:
+        x = Quantizer(name=f"{prefix}_lut_in_2")(x)  # Bounds the LUT Address Space
 
-        # Determine whether to use quantized or standard dense layers
-        dense_cls = QDense if quantize else keras.layers.Dense
+    x = activation_fn(x)
 
-        self.parity_initializer = keras.initializers.VarianceScaling(
-            scale=1 / 3, mode="fan_in", distribution="uniform"
-        )
+    if quantize:
+        x = Quantizer(name=f"{prefix}_lut_out_2")(x)  # Bounds the LUT Value Space
 
-        def get_norm(name):
-            if normalization == "Batch":
-                return keras.layers.BatchNormalization(
-                    axis=-1, name=name, momentum=momentum, epsilon=1e-5
-                )
-            else:
-                return keras.layers.LayerNormalization(axis=-1, name=name)
-
-        # Layer Definitions based on the nn.Sequential reference
-        self.norm1 = get_norm("ffn_norm1")
-        self.dense1 = dense_cls(
-            hidden_dim,
-            use_bias=False,
-            kernel_initializer=self.parity_initializer,
-            name="ffn_expand",
-        )
-
-        self.norm2 = get_norm("ffn_norm2")
-        self.dense2 = dense_cls(
-            in_dim,
-            use_bias=False,
-            kernel_initializer=self.parity_initializer,
-            name="ffn_contract",
-        )
-
-        # Activation (Keras 'silu' is equivalent to torch.nn.SiLU)
-        self.activation_fn = keras.activations.get(activation.lower())
-
-    def call(self, x, training=False):
-        # x shape: (batch, seq_len, in_dim)
-
-        # Block 1: Norm -> Activation -> Linear (Expansion)
-        x = self.norm1(x, training=training)
-        x = self.dense1(x)
-        x = self.activation_fn(x)
-
-        # Block 2: Norm -> Activation -> Linear (Contraction)
-        x = self.norm2(x, training=training)
-        x = self.dense2(x)
-        x = self.activation_fn(x)
-
-        return x
-
-    def get_config(self):
-        config = super().get_config()
-        config.update(
-            {
-                "in_dim": self.in_dim,
-                "multiplication": self.multiplication,
-                "activation": self.activation,
-                "normalization": self.normalization,
-                "momentum": self.momentum,
-                "quantize": self.quantize,
-            }
-        )
-        return config
+    return x
