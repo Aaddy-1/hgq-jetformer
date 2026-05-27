@@ -1,33 +1,22 @@
 import keras
-from hgq.layers import QDense
+from hgq.layers import QDense, Quantizer
 
 
-class HGQEmbedding(keras.layers.Layer):
-    """
-    Embedding layer with HGQ2 integration.
-    Projects raw particle features into the latent space.
-    """
+def apply_hgq_embedding(x, in_dim, embedding_dim, quantize=True, prefix="embedding"):
+    parity_initializer = keras.initializers.VarianceScaling(
+        scale=1 / 3, mode="fan_in", distribution="uniform"
+    )
 
-    def __init__(self, in_dim, embedding_dim, quantize=True, **kwargs):
-        super().__init__(**kwargs)
-        self.in_dim = in_dim
-        self.embedding_dim = embedding_dim
-        self.quantize = quantize
+    dense_cls = QDense if quantize else keras.layers.Dense
 
-        self.parity_initializer = keras.initializers.VarianceScaling(
-            scale=1 / 3, mode="fan_in", distribution="uniform"
-        )
+    x = dense_cls(
+        embedding_dim,
+        kernel_initializer=parity_initializer,
+        bias_initializer=parity_initializer,
+        name=f"{prefix}_projection",
+    )(x)
 
-        dense_cls = QDense if quantize else keras.layers.Dense
+    # if quantize:
+    #     x = Quantizer(name=f"{prefix}_quantizer")(x)
 
-        self.dense_embedding = dense_cls(
-            embedding_dim,
-            kernel_initializer=self.parity_initializer,
-            # Replicates PyTorch's default uniform bias initialization
-            bias_initializer=self.parity_initializer,
-            name="embedding_projection",
-        )
-
-    def call(self, x, training=False):
-        # x shape: (batch, num_particles, in_dim)
-        return self.dense_embedding(x)
+    return x

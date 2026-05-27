@@ -1,7 +1,7 @@
 import os
 
 # Route Keras to the installed backend
-os.environ["KERAS_BACKEND"] = "jax"  # or "tensorflow"
+os.environ["KERAS_BACKEND"] = "tensorflow"  # or "tensorflow"
 
 # If using JAX: Prevent the backend from pre-allocating 100% of VRAM,
 # which can crash out-of-core data loaders.
@@ -14,11 +14,16 @@ from sklearn.metrics import accuracy_score, roc_auc_score
 import keras
 import json
 
+# HGQ2 Imports
+from hgq.config import QuantizerConfigScope, LayerConfigScope
+from hgq.utils import trace_minmax
+
 # Relative imports
 from src.dataset import JetFormerDataGenerator
-from src.models.jetformer import HGQJetFormer
+from src.models.jetformer import build_hgq_jetformer
 from src.onecyclelr import OneCycleLR
-
+from hgq.utils.sugar.beta_pid import BetaPID
+from hgq.regularizers import MonoL1
 
 # Resolves to the 'src' directory
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -86,19 +91,17 @@ def setup_data_generators(num_particles, num_feats, batch_size, val_ratio=0.1):
 
     return train_gen, val_gen, test_gen
 
+
 def save_final_evaluation(acc, class_accs, aucs, classes, filepath):
     """
     Serializes test set metrics to a JSON file.
     """
-    results = {
-        "overall_accuracy": float(acc),
-        "per_class_metrics": {}
-    }
+    results = {"overall_accuracy": float(acc), "per_class_metrics": {}}
 
     for i, class_name in enumerate(classes):
         results["per_class_metrics"][class_name] = {
             "accuracy": float(class_accs[i]) if not np.isnan(class_accs[i]) else None,
-            "auc": float(aucs[i]) if aucs[i] is not None else None
+            "auc": float(aucs[i]) if aucs[i] is not None else None,
         }
 
     with open(filepath, "w") as f:
@@ -193,6 +196,7 @@ def train(
     plot_path: str = None,
     output_path: str = None,
     experiment: str = None,
+    quantize: bool = True,
 ):
     train_gen, val_gen, test_gen = setup_data_generators(
         num_particles=num_particles,
@@ -209,126 +213,207 @@ def train(
         current_model_dir = MODEL_DIR
         current_output_dir = OUTPUT_DIR
 
+    if quantize:
+        current_model_dir = os.path.join(current_model_dir, "quantized")
+        current_output_dir = os.path.join(current_output_dir, "quantized")
+
     os.makedirs(current_model_dir, exist_ok=True)
     os.makedirs(current_output_dir, exist_ok=True)
 
     total_steps = len(train_gen) * num_epochs
-    lr_schedule = build_lr_schedule(max_lr=1e-3, total_steps=total_steps)
-    optimizer = keras.optimizers.AdamW(learning_rate=lr_schedule, weight_decay=1e-2, global_clipnorm=1.0)
-
-    model = HGQJetFormer(
-        in_dim=num_feats,
-        embed_dim=embbed_dim,
-        num_heads=num_heads,
-        num_classes=len(CLASSES),
-        num_transformers=num_transformers,
-        dropout=dropout,
-        num_particles=num_particles,
-        activation=activation,
-        normalization=normalization,
-        quantize=False,
+    # lr_schedule = build_lr_schedule(max_lr=1e-3, total_steps=total_steps)
+    optimizer = keras.optimizers.AdamW(
+        learning_rate=1e-3, weight_decay=1e-4, global_clipnorm=1.0
     )
 
-    dummy_tensor = keras.ops.zeros((1, num_particles, num_feats))
-    model(dummy_tensor)
-
-    # Output the fully instantiated architectural footprint
-    print("=================MODEL SUMMARY=================")
-    model.summary()
-
-    model.compile(
-        optimizer=optimizer,
-        loss=keras.losses.SparseCategoricalCrossentropy(from_logits=True),
-        metrics=["sparse_categorical_accuracy"],
+    # Instantiate scopes BEFORE the context manager
+    quant_scope = QuantizerConfigScope(
+        place="all", default_q_type="kbi", overflow_mode="SAT_SYM", br=MonoL1(1e-7)
     )
+    layer_scope = LayerConfigScope(enable_ebops=True, beta0=5e-8)
 
-    callbacks = []
-    if early_stopping_patience > 0:
+    # Wrap model instantiation and training in HGQ2 Scopes
+    with quant_scope, layer_scope:
+
+        # 1. Instantiate the Statically Traceable Graph
+        model = build_hgq_jetformer(
+            in_dim=num_feats,
+            embed_dim=embbed_dim,
+            num_heads=num_heads,
+            num_classes=len(CLASSES),
+            num_transformers=num_transformers,
+            dropout=dropout,
+            num_particles=num_particles,
+            activation=activation,
+            normalization=normalization,
+            quantize=quantize,
+        )
+
+        # The manual forward pass (model(physical_batch)) is removed.
+        # The Keras Functional API pre-compiles the topological footprint.
+
+        # Output the fully instantiated architectural footprint
+        print("=================MODEL SUMMARY=================")
+        model.summary()
+
+        model.compile(
+            optimizer=optimizer,
+            loss=keras.losses.SparseCategoricalCrossentropy(from_logits=True),
+            metrics=["sparse_categorical_accuracy"],
+        )
+
+        callbacks = []
+        if early_stopping_patience > 0:
+            callbacks.append(
+                keras.callbacks.EarlyStopping(
+                    monitor="val_loss",
+                    patience=early_stopping_patience,
+                    min_delta=1e-4,
+                    restore_best_weights=True,
+                )
+            )
+
+        # Add this inside your training block before model.fit()
         callbacks.append(
-            keras.callbacks.EarlyStopping(
-                monitor="val_loss",
-                patience=early_stopping_patience,
-                min_delta=1e-4,
-                restore_best_weights=True,
+            keras.callbacks.ReduceLROnPlateau(
+                monitor="val_loss", factor=0.8, patience=5, min_lr=1e-4
             )
         )
 
-    if save:
-        if model_path is None:
-            model_path = os.path.join(current_model_dir, f"{num_particles}_{num_feats}f.keras")
-        callbacks.append(
-            keras.callbacks.ModelCheckpoint(
-                filepath=model_path, monitor="val_loss", save_best_only=True
-            )
-        )
-
-    if do_train:
-        print(
-            f"Starting training for {num_particles} particles, {num_feats} features with early stopping {early_stopping_patience}... "
-        )
-        history = model.fit(
-            train_gen, validation_data=val_gen, epochs=num_epochs, callbacks=callbacks
-        )
+        if quantize:
+            callbacks.append(BetaPID(p=1, i=0.1, d=0, target_ebops=350000.0, warmup=5))
 
         if save:
-            if output_path is None:
-                output_path = os.path.join(
-                    current_output_dir, f"{num_particles}_{num_feats}f_loss_acc.npz"
+            if model_path is None:
+                model_path = os.path.join(
+                    current_model_dir, f"{num_particles}_{num_feats}f.keras"
                 )
-            if plot_path is None:
-                plot_path = os.path.join(
-                    current_output_dir, f"{num_particles}_{num_feats}f_plot.png"
+            # Initialize eval path here to ensure global function scope
+            eval_results_path = os.path.join(
+                current_output_dir, f"{num_particles}_{num_feats}f_metrics.json"
+            )
+            callbacks.append(
+                keras.callbacks.ModelCheckpoint(
+                    filepath=model_path, monitor="val_loss", save_best_only=True
                 )
-            
-            eval_results_path = os.path.join(current_output_dir, f"{num_particles}_{num_feats}f_metrics.json")
+            )
 
-            save_loss_acc(history.history, num_particles, num_feats, output_path)
-            plot_loss_acc(history.history, num_particles, num_feats, plot_path)
-    
-    print("\nLoading Best Checkpoint Weights...")
-    # Explicitly restore the optimal weights saved by ModelCheckpoint
-    if save and model_path is not None:
-        model.load_weights(model_path)
+        if do_train:
+            print(
+                f"Starting training for {num_particles} particles, {num_feats} features with early stopping {early_stopping_patience} and {'with' if quantize else 'without'} quantization ... "
+            )
+            history = model.fit(
+                train_gen,
+                validation_data=val_gen,
+                epochs=num_epochs,
+                callbacks=callbacks,
+            )
 
-    print("\nExecuting Inference on Test Set...")
-    outputs = model.predict(test_gen)
+            if save:
+                if output_path is None:
+                    output_path = os.path.join(
+                        current_output_dir, f"{num_particles}_{num_feats}f_loss_acc.npz"
+                    )
+                if plot_path is None:
+                    plot_path = os.path.join(
+                        current_output_dir, f"{num_particles}_{num_feats}f_plot.png"
+                    )
 
-    # Extract true labels directly from the un-shuffled generator
-    labels = np.concatenate([y for _, y in test_gen], axis=0)
+                save_loss_acc(history.history, num_particles, num_feats, output_path)
+                plot_loss_acc(history.history, num_particles, num_feats, plot_path)
 
-    test_acc, test_class_accs, test_aucs = evaluate(outputs, labels, CLASSES)
+        print("\nLoading Best Checkpoint Weights...")
+        # Explicitly restore the optimal weights saved by ModelCheckpoint
+        if save and model_path is not None:
+            model.load_weights(model_path)
 
-    # Persist to disk
-    if save:
-        save_final_evaluation(
-            test_acc, 
-            test_class_accs, 
-            test_aucs, 
-            CLASSES, 
-            eval_results_path
-        )
-        print(f"Final metrics saved to: {eval_results_path}")
+        # Post-Training Activation Profiling for WRAP mode safety
+        if quantize:
+            print(
+                "\n[HGQ] Initiating activation profiling for WRAP mode calibration..."
+            )
 
-    evaluate(outputs, labels, CLASSES)
+            x_calib = np.concatenate(
+                [next(iter(train_gen))[0] for _ in range(10)], axis=0
+            )
+
+            # 2. Calibrate the integer boundaries
+            trace_minmax(model, x_calib)
+            print("[HGQ] Profiling complete. Integer boundaries securely calibrated.")
+
+        print("\nExecuting Inference on Test Set...")
+        outputs = model.predict(test_gen)
+
+        # Extract true labels directly from the un-shuffled generator
+        labels = np.concatenate([y for _, y in test_gen], axis=0)
+
+        test_acc, test_class_accs, test_aucs = evaluate(outputs, labels, CLASSES)
+
+        # Persist to disk
+        if save:
+            save_final_evaluation(
+                test_acc, test_class_accs, test_aucs, CLASSES, eval_results_path
+            )
+            print(f"Final metrics saved to: {eval_results_path}")
+
+        # --- 4. ALKAID NATIVE ALIR TRACING ---
+        if quantize:
+            from alkaid.converter import trace_model
+            from alkaid.codegen import RTLModel
+
+            print("\n[Alkaid] Tracing quantized Keras graph to ALIR...")
+
+            inp, out = trace_model(model)
+
+            print("[Alkaid] Generating Verilog RTL via static dataflow...")
+            rtl = RTLModel(inp, out, latency_cutoff=5)
+
+            rtl_out_path = os.path.join(current_output_dir, "rtl_prj")
+            os.makedirs(rtl_out_path, exist_ok=True)
+
+            rtl.write(rtl_out_path)
+            print(f"[Alkaid] Hardware synthesis complete. RTL saved to: {rtl_out_path}")
+
+        # evaluate(outputs, labels, CLASSES)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train HGQJetFormer")
-    parser.add_argument("--num_particles", type=int, default=8, help="Number of jet constituents")
-    parser.add_argument("--num_feats", type=int, default=3, choices=[3, 16], help="Number of features per constituent")
-    parser.add_argument("--num_epochs", type=int, default=25, help="Total training epochs")
-    parser.add_argument("--batch_size", type=int, default=256, help="Training batch size")
-    parser.add_argument("--experiment", type=str, default=None, help="Name of the experiment folder")
-    
+    parser.add_argument(
+        "--num_particles", type=int, default=8, help="Number of jet constituents"
+    )
+    parser.add_argument(
+        "--num_feats",
+        type=int,
+        default=3,
+        choices=[3, 16],
+        help="Number of features per constituent",
+    )
+    parser.add_argument(
+        "--num_epochs", type=int, default=25, help="Total training epochs"
+    )
+    parser.add_argument(
+        "--batch_size", type=int, default=256, help="Training batch size"
+    )
+    parser.add_argument(
+        "--experiment", type=str, default=None, help="Name of the experiment folder"
+    )
+    parser.add_argument(
+        "--quantize",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Enable HGQ2 quantization",
+    )
     args = parser.parse_args()
 
     train(
-        num_particles=args.num_particles, 
+        num_particles=args.num_particles,
         num_feats=args.num_feats,
         num_epochs=args.num_epochs,
         batch_size=args.batch_size,
-        num_transformers=2,
-        early_stopping_patience=6,  # Enforced 0 to allow OneCycleLR decay phase
+        num_transformers=3,
+        early_stopping_patience=15,  # Enforced 0 to allow OneCycleLR decay phase
         val_ratio=0.1,
-        experiment=args.experiment
+        experiment=args.experiment,
+        quantize=args.quantize,
     )
