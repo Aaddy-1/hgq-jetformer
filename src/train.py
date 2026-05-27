@@ -362,17 +362,15 @@ def train(
             from alkaid.codegen import RTLModel
 
             print("\n[Alkaid] Tracing quantized Keras graph to ALIR...")
-            # Replay the natively loaded HGQ model operations onto symbolic tensors
+
             inp, out = trace_model(model)
 
             print("[Alkaid] Generating Verilog RTL via static dataflow...")
             rtl = RTLModel(inp, out, latency_cutoff=5)
 
-            # Ensure the output directory exists
             rtl_out_path = os.path.join(current_output_dir, "rtl_prj")
             os.makedirs(rtl_out_path, exist_ok=True)
 
-            # Write out the raw hardware description
             rtl.write(rtl_out_path)
             print(f"[Alkaid] Hardware synthesis complete. RTL saved to: {rtl_out_path}")
 

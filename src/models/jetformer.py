@@ -7,28 +7,27 @@ from hgq.layers import QBatchNormalization, Quantizer
 from ..layers.embedding import apply_hgq_embedding
 from ..layers.transformer import apply_hgq_transformer_block
 
+# @keras.saving.register_keras_serializable()
+# class PrependCLSToken(keras.layers.Layer):
+#     """Isolated trainable parameter layer to avoid subclassing the main model."""
 
-@keras.saving.register_keras_serializable()
-class PrependCLSToken(keras.layers.Layer):
-    """Isolated trainable parameter layer to avoid subclassing the main model."""
+#     def __init__(self, embed_dim, **kwargs):
+#         super().__init__(**kwargs)
+#         self.embed_dim = embed_dim
 
-    def __init__(self, embed_dim, **kwargs):
-        super().__init__(**kwargs)
-        self.embed_dim = embed_dim
+#     def build(self, input_shape):
+#         self.cls_token = self.add_weight(
+#             name="cls_token",
+#             shape=(1, 1, self.embed_dim),
+#             initializer=keras.initializers.RandomNormal(mean=0.0, stddev=1.0),
+#             trainable=True,
+#         )
+#         super().build(input_shape)
 
-    def build(self, input_shape):
-        self.cls_token = self.add_weight(
-            name="cls_token",
-            shape=(1, 1, self.embed_dim),
-            initializer=keras.initializers.RandomNormal(mean=0.0, stddev=1.0),
-            trainable=True,
-        )
-        super().build(input_shape)
-
-    def call(self, x):
-        batch_size = ops.shape(x)[0]
-        cls_tokens = ops.broadcast_to(self.cls_token, (batch_size, 1, self.embed_dim))
-        return ops.concatenate([cls_tokens, x], axis=1)
+#     def call(self, x):
+#         batch_size = ops.shape(x)[0]
+#         cls_tokens = ops.broadcast_to(self.cls_token, (batch_size, 1, self.embed_dim))
+#         return ops.concatenate([cls_tokens, x], axis=1)
 
 
 def build_hgq_jetformer(
@@ -58,8 +57,7 @@ def build_hgq_jetformer(
     )
 
     # 3. Prepare and Prepend CLS token
-    # Extract a single spatial token to capture the dynamic batch dimension natively.
-    # Shape becomes: (Batch, 1, embed_dim)
+    # Shape (Batch, 1, embed_dim)
     dummy_slice = x[:, 0:1, :]
 
     # Nullify the slice. Keras translates this cleanly to an ops.multiply node.
