@@ -223,18 +223,28 @@ def train(
     total_steps = len(train_gen) * num_epochs
     # lr_schedule = build_lr_schedule(max_lr=1e-3, total_steps=total_steps)
     optimizer = keras.optimizers.AdamW(
-        learning_rate=1e-3, weight_decay=1e-4, global_clipnorm=1.0
+        learning_rate=1e-4, weight_decay=1e-4, global_clipnorm=0.5
     )
 
     # Instantiate scopes BEFORE the context manager
     quant_scope = QuantizerConfigScope(
-        place="all", default_q_type="kbi", overflow_mode="SAT_SYM", br=MonoL1(1e-7)
+        place="all", default_q_type="kbi", overflow_mode="WRAP", br=MonoL1(1e-8)
     )
     layer_scope = LayerConfigScope(enable_ebops=True, beta0=5e-8)
 
     # Wrap model instantiation and training in HGQ2 Scopes
     with quant_scope, layer_scope:
-
+        print("[DEBUG] Model Args: ")
+        print("in_dim=", num_feats)
+        print("embed_dim=", embbed_dim)
+        print("num_heads=", num_heads)
+        print("num_classes=", len(CLASSES))
+        print("num_transformers=", num_transformers)
+        print("dropout=", dropout)
+        print("num_particles=", num_particles)
+        print("activation=", activation)
+        print("normalization=", normalization)
+        print("quantize=", quantize)
         # 1. Instantiate the Statically Traceable Graph
         model = build_hgq_jetformer(
             in_dim=num_feats,
@@ -355,24 +365,6 @@ def train(
                 test_acc, test_class_accs, test_aucs, CLASSES, eval_results_path
             )
             print(f"Final metrics saved to: {eval_results_path}")
-
-        # --- 4. ALKAID NATIVE ALIR TRACING ---
-        if quantize:
-            from alkaid.converter import trace_model
-            from alkaid.codegen import RTLModel
-
-            print("\n[Alkaid] Tracing quantized Keras graph to ALIR...")
-
-            inp, out = trace_model(model)
-
-            print("[Alkaid] Generating Verilog RTL via static dataflow...")
-            rtl = RTLModel(inp, out, latency_cutoff=5)
-
-            rtl_out_path = os.path.join(current_output_dir, "rtl_prj")
-            os.makedirs(rtl_out_path, exist_ok=True)
-
-            rtl.write(rtl_out_path)
-            print(f"[Alkaid] Hardware synthesis complete. RTL saved to: {rtl_out_path}")
 
         # evaluate(outputs, labels, CLASSES)
 
