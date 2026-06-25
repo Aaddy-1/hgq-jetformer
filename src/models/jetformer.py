@@ -1,33 +1,42 @@
 import keras
 from keras import ops
 from keras import layers
-from hgq.layers import QBatchNormalization, Quantizer
+from hgq.layers import QBatchNormalization, Quantizer, QDense
 
 # Assuming imports from your architecture definitions:
 from ..layers.embedding import apply_hgq_embedding
 from ..layers.transformer import apply_hgq_transformer_block
 
-# @keras.saving.register_keras_serializable()
-# class PrependCLSToken(keras.layers.Layer):
-#     """Isolated trainable parameter layer to avoid subclassing the main model."""
+from hgq.layers import Quantizer
+from keras import ops
 
-#     def __init__(self, embed_dim, **kwargs):
-#         super().__init__(**kwargs)
-#         self.embed_dim = embed_dim
 
-#     def build(self, input_shape):
-#         self.cls_token = self.add_weight(
-#             name="cls_token",
-#             shape=(1, 1, self.embed_dim),
-#             initializer=keras.initializers.RandomNormal(mean=0.0, stddev=1.0),
-#             trainable=True,
-#         )
-#         super().build(input_shape)
+@keras.saving.register_keras_serializable()
+class PrependCLSToken(keras.layers.Layer):
+    def __init__(self, embed_dim, quantize=True, **kwargs):
+        super().__init__(**kwargs)
+        self.embed_dim = embed_dim
+        self.quantize = quantize
 
-#     def call(self, x):
-#         batch_size = ops.shape(x)[0]
-#         cls_tokens = ops.broadcast_to(self.cls_token, (batch_size, 1, self.embed_dim))
-#         return ops.concatenate([cls_tokens, x], axis=1)
+    def build(self, input_shape):
+        self.cls_token = self.add_weight(
+            name="cls_token",
+            shape=(1, 1, self.embed_dim),
+            initializer="random_normal",
+            trainable=True,
+        )
+        if self.quantize:
+            self.token_quantizer = Quantizer(name="cls_quantizer")
+        super().build(input_shape)
+
+    def call(self, x):
+        batch_size = ops.shape(x)[0]
+        tokens = ops.broadcast_to(self.cls_token, (batch_size, 1, self.embed_dim))
+
+        if self.quantize:
+            tokens = self.token_quantizer(tokens)
+
+        return ops.concatenate([tokens, x], axis=1)
 
 
 def build_hgq_jetformer(
@@ -57,16 +66,20 @@ def build_hgq_jetformer(
     )
 
     # 3. Prepare and Prepend CLS token
-    # Shape (Batch, 1, embed_dim)
+    # withClsFunctional
+    # ==========================================
+    # FUNCTIONAL CLS TOKEN INJECTION
+    # ==========================================
+    # 1. Isolate a single quantized spatial vector.
+    # The native Python slice is preserved by compile_hls.py
     dummy_slice = x[:, 0:1, :]
 
-    # Nullify the slice. Keras translates this cleanly to an ops.multiply node.
-    # Shape remains: (Batch, 1, embed_dim), but all values are 0.0
+    # 2. Zero out the spatial data to create a blank canvas.
     zero_slice = dummy_slice * 0.0
 
-    # Inject the trainable CLS parameter via a standard Dense bias.
-    # The kernel multiplication evaluates to zero; only the bias (the CLS token) remains.
-    cls_tokens = layers.Dense(
+    # 3. Inject the trainable token parameters using a standard primitive.
+    # Because x is already quantized from the embedding, this avoids the cmvm crash.
+    raw_cls_tokens = keras.layers.Dense(
         units=embed_dim,
         use_bias=True,
         kernel_initializer="zeros",
@@ -75,8 +88,17 @@ def build_hgq_jetformer(
         name="cls_token_weight",
     )(zero_slice)
 
-    # Prepend the token to the sequence
-    x = layers.Concatenate(axis=1, name="cls_token_injection")([cls_tokens, x])
+    # from hgq.layers import Quantizer
+
+    # 4. Explicitly bound the float32 bias output back into the integer domain
+    # before it enters the Transformer blocks.
+    quantized_cls_tokens = Quantizer(name="cls_quantizer")(raw_cls_tokens)
+
+    # 5. Route the purely quantized tensors into the sequence block.
+    x = keras.layers.Concatenate(axis=1, name="cls_token_injection")(
+        [quantized_cls_tokens, x]
+    )
+    # ==========================================
 
     if quantize:
         x = Quantizer(name="entry_quantizer")(x)
