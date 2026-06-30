@@ -60,3 +60,15 @@ class OneCycleLR(keras.optimizers.schedules.LearningRateSchedule):
             "div_factor": self.div_factor,
             "final_div_factor": self.final_div_factor,
         }
+
+def build_lr_schedule(max_lr, total_steps, pct_start=0.2):
+    """
+    Helper function to instantiate a OneCycleLR schedule with PyTorch defaults.
+    """
+    return OneCycleLR(
+        max_lr=max_lr,
+        total_steps=total_steps,
+        pct_start=pct_start,
+        div_factor=25.0,
+        final_div_factor=1e4,
+    )
