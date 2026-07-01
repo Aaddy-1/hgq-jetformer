@@ -38,26 +38,31 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 # Define classes for the 150-particle dataset
 CLASSES = ["Gluon", "Light_quarks", "W_boson", "Z_boson", "Top_quark"]
 
+
 class EbopsCaptureCallback(keras.callbacks.Callback):
     """Captures the ebops of the best model (by val_loss) directly from HGQ layer attributes."""
+
     def __init__(self):
         super().__init__()
-        self.best_val_loss = float('inf')
+        self.best_val_loss = float("inf")
         self.best_ebops = None
 
     def _get_ebops(self):
         ebops = 0.0
+        found = False
         for layer in self.model.layers:
-            if hasattr(layer, 'ebops'):
+            if hasattr(layer, "ebops"):
                 ebops += float(layer.ebops)
-        return ebops
+                found = True
+        return ebops if found else None
 
     def on_epoch_end(self, epoch, logs=None):
         logs = logs or {}
-        val_loss = logs.get('val_loss')
+        val_loss = logs.get("val_loss")
         if val_loss is not None and val_loss < self.best_val_loss:
             self.best_val_loss = val_loss
             self.best_ebops = self._get_ebops()
+
 
 def extract_model_metadata(model, best_ebops):
     layers_metadata = []
@@ -67,17 +72,20 @@ def extract_model_metadata(model, best_ebops):
         except (AttributeError, ValueError):
             out_shape = "N/A"
 
-        layers_metadata.append({
-            "name": layer.name,
-            "type": layer.__class__.__name__,
-            "output_shape": out_shape,
-            "params": int(layer.count_params())
-        })
+        layers_metadata.append(
+            {
+                "name": layer.name,
+                "type": layer.__class__.__name__,
+                "output_shape": out_shape,
+                "params": int(layer.count_params()),
+            }
+        )
     return {
         "best_ebops": best_ebops,
         "total_parameters": int(model.count_params()),
-        "layers": layers_metadata
+        "layers": layers_metadata,
     }
+
 
 def setup_data_generators(num_particles, num_feats, batch_size, val_ratio=0.1):
     base_path = os.path.join(PROCESSED_DIR, str(num_particles), f"{num_feats}f")
@@ -85,6 +93,7 @@ def setup_data_generators(num_particles, num_feats, batch_size, val_ratio=0.1):
     test_h5_path = os.path.join(base_path, "test.h5")
 
     import h5py
+
     with h5py.File(train_h5_path, "r") as f:
         total_train_samples = f["jetConstituentList"].shape[0]
 
@@ -94,23 +103,29 @@ def setup_data_generators(num_particles, num_feats, batch_size, val_ratio=0.1):
     train_indices = indices[val_size:]
 
     train_gen = JetFormerDataGenerator(
-        h5_path=train_h5_path, stats_dir=base_path, batch_size=batch_size, shuffle=True, indices=train_indices
+        h5_path=train_h5_path,
+        stats_dir=base_path,
+        batch_size=batch_size,
+        shuffle=True,
+        indices=train_indices,
     )
     val_gen = JetFormerDataGenerator(
-        h5_path=train_h5_path, stats_dir=base_path, batch_size=batch_size, shuffle=False, indices=val_indices
+        h5_path=train_h5_path,
+        stats_dir=base_path,
+        batch_size=batch_size,
+        shuffle=False,
+        indices=val_indices,
     )
     test_gen = JetFormerDataGenerator(
         h5_path=test_h5_path, stats_dir=base_path, batch_size=batch_size, shuffle=False
     )
     return train_gen, val_gen, test_gen
 
+
 def save_final_evaluation(acc, class_accs, aucs, classes, metadata, filepath):
     results = {
-        "performance": {
-            "overall_accuracy": float(acc),
-            "per_class_metrics": {}
-        },
-        "metadata": metadata
+        "performance": {"overall_accuracy": float(acc), "per_class_metrics": {}},
+        "metadata": metadata,
     }
     for i, class_name in enumerate(classes):
         results["performance"]["per_class_metrics"][class_name] = {
@@ -119,6 +134,7 @@ def save_final_evaluation(acc, class_accs, aucs, classes, metadata, filepath):
         }
     with open(filepath, "w") as f:
         json.dump(results, f, indent=4)
+
 
 def save_loss_acc(history_dict, num_particles, num_feats, output_path):
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
@@ -130,6 +146,7 @@ def save_loss_acc(history_dict, num_particles, num_feats, output_path):
         val_accs=np.array(history_dict.get("val_sparse_categorical_accuracy", [])),
     )
     print(f"Loss and accuracy saved to {output_path}")
+
 
 def plot_loss_acc(history_dict, num_particles, num_feats, plot_path):
     os.makedirs(os.path.dirname(plot_path), exist_ok=True)
@@ -145,8 +162,12 @@ def plot_loss_acc(history_dict, num_particles, num_feats, plot_path):
     plt.legend()
 
     plt.subplot(2, 1, 2)
-    plt.plot(epochs, history_dict.get("sparse_categorical_accuracy", []), label="Train Acc")
-    plt.plot(epochs, history_dict.get("val_sparse_categorical_accuracy", []), label="Val Acc")
+    plt.plot(
+        epochs, history_dict.get("sparse_categorical_accuracy", []), label="Train Acc"
+    )
+    plt.plot(
+        epochs, history_dict.get("val_sparse_categorical_accuracy", []), label="Val Acc"
+    )
     plt.xlabel("Epoch")
     plt.ylabel("Accuracy")
     plt.title("Training and Validation Accuracy")
@@ -156,6 +177,7 @@ def plot_loss_acc(history_dict, num_particles, num_feats, plot_path):
     plt.savefig(plot_path)
     plt.close()
     print(f"Loss and accuracy plots saved to {plot_path}")
+
 
 def evaluate(outputs: np.ndarray, labels: np.ndarray, classes: list):
     pred_labels = outputs.argmax(axis=1)
@@ -186,6 +208,7 @@ def evaluate(outputs: np.ndarray, labels: np.ndarray, classes: list):
 
     return acc, class_accs, aucs
 
+
 def resolve_experiment_paths(experiment: str, quantize: bool) -> tuple[str, str]:
     if experiment:
         exp_root = os.path.join(PROJECT_ROOT, "experiment", experiment)
@@ -203,10 +226,11 @@ def resolve_experiment_paths(experiment: str, quantize: bool) -> tuple[str, str]
     os.makedirs(current_output_dir, exist_ok=True)
     return current_model_dir, current_output_dir
 
-def build_callbacks(early_stopping_patience: int, quantize: bool, save: bool, model_path: str):
+
+def build_callbacks(
+    early_stopping_patience: int, quantize: bool, save: bool, model_path: str
+):
     callbacks = []
-    ebops_capture = EbopsCaptureCallback()
-    callbacks.append(ebops_capture)
 
     if early_stopping_patience > 0:
         callbacks.append(
@@ -231,9 +255,24 @@ def build_callbacks(early_stopping_patience: int, quantize: bool, save: bool, mo
                 filepath=model_path, monitor="val_loss", save_best_only=True
             )
         )
+
+    # EbopsCaptureCallback runs last to ensure BetaPID has updated layer states
+    ebops_capture = EbopsCaptureCallback()
+    callbacks.append(ebops_capture)
+
     return callbacks, ebops_capture
 
-def run_post_training_pipeline(model, train_gen, test_gen, quantize: bool, save: bool, model_path: str, eval_results_path: str, best_ebops: float):
+
+def run_post_training_pipeline(
+    model,
+    train_gen,
+    test_gen,
+    quantize: bool,
+    save: bool,
+    model_path: str,
+    eval_results_path: str,
+    best_ebops: float,
+):
     print("\nLoading Best Checkpoint Weights...")
     if save and model_path is not None:
         try:
@@ -254,8 +293,11 @@ def run_post_training_pipeline(model, train_gen, test_gen, quantize: bool, save:
 
     if save and eval_results_path:
         metadata = extract_model_metadata(model, best_ebops)
-        save_final_evaluation(test_acc, test_class_accs, test_aucs, CLASSES, metadata, eval_results_path)
+        save_final_evaluation(
+            test_acc, test_class_accs, test_aucs, CLASSES, metadata, eval_results_path
+        )
         print(f"Final metrics and metadata saved to: {eval_results_path}")
+
 
 def train(
     num_particles: int = 150,
@@ -279,35 +321,65 @@ def train(
     quantize: bool = True,
 ):
     train_gen, val_gen, test_gen = setup_data_generators(
-        num_particles=num_particles, num_feats=num_feats, batch_size=batch_size, val_ratio=val_ratio,
+        num_particles=num_particles,
+        num_feats=num_feats,
+        batch_size=batch_size,
+        val_ratio=val_ratio,
     )
 
-    current_model_dir, current_output_dir = resolve_experiment_paths(experiment, quantize)
+    current_model_dir, current_output_dir = resolve_experiment_paths(
+        experiment, quantize
+    )
 
     if model_path is None:
-        model_path = os.path.join(current_model_dir, f"{num_particles}_{num_feats}f.keras")
+        model_path = os.path.join(
+            current_model_dir, f"{num_particles}_{num_feats}f.keras"
+        )
     if output_path is None:
-        output_path = os.path.join(current_output_dir, f"{num_particles}_{num_feats}f_loss_acc.npz")
+        output_path = os.path.join(
+            current_output_dir, f"{num_particles}_{num_feats}f_loss_acc.npz"
+        )
     if plot_path is None:
-        plot_path = os.path.join(current_output_dir, f"{num_particles}_{num_feats}f_plot.png")
-    
-    eval_results_path = os.path.join(current_output_dir, f"{num_particles}_{num_feats}f_metrics.json")
+        plot_path = os.path.join(
+            current_output_dir, f"{num_particles}_{num_feats}f_plot.png"
+        )
 
-    optimizer = keras.optimizers.AdamW(learning_rate=1e-4, weight_decay=1e-4, global_clipnorm=0.5)
+    eval_results_path = os.path.join(
+        current_output_dir, f"{num_particles}_{num_feats}f_metrics.json"
+    )
 
-    quant_scope = QuantizerConfigScope(place="all", default_q_type="kbi", overflow_mode="WRAP", br=MonoL1(1e-8))
+    optimizer = keras.optimizers.AdamW(
+        learning_rate=1e-4, weight_decay=1e-4, global_clipnorm=0.5
+    )
+
+    quant_scope = QuantizerConfigScope(
+        place="all", default_q_type="kbi", overflow_mode="WRAP", br=MonoL1(1e-8)
+    )
     layer_scope = LayerConfigScope(enable_ebops=True, beta0=5e-8)
 
     with quant_scope, layer_scope:
         print("[DEBUG] Model Args: ")
-        print(f"in_dim={num_feats}, embed_dim={embbed_dim}, num_heads={num_heads}, num_classes={len(CLASSES)}")
-        print(f"num_transformers={num_transformers}, dropout={dropout}, num_particles={num_particles}")
-        print(f"activation={activation}, normalization={normalization}, quantize={quantize}")
-        
+        print(
+            f"in_dim={num_feats}, embed_dim={embbed_dim}, num_heads={num_heads}, num_classes={len(CLASSES)}"
+        )
+        print(
+            f"num_transformers={num_transformers}, dropout={dropout}, num_particles={num_particles}"
+        )
+        print(
+            f"activation={activation}, normalization={normalization}, quantize={quantize}"
+        )
+
         model = build_hgq_jetformer(
-            in_dim=num_feats, embed_dim=embbed_dim, num_heads=num_heads, num_classes=len(CLASSES),
-            num_transformers=num_transformers, dropout=dropout, num_particles=num_particles,
-            activation=activation, normalization=normalization, quantize=quantize,
+            in_dim=num_feats,
+            embed_dim=embbed_dim,
+            num_heads=num_heads,
+            num_classes=len(CLASSES),
+            num_transformers=num_transformers,
+            dropout=dropout,
+            num_particles=num_particles,
+            activation=activation,
+            normalization=normalization,
+            quantize=quantize,
         )
 
         print("=================MODEL SUMMARY=================")
@@ -319,26 +391,64 @@ def train(
             metrics=["sparse_categorical_accuracy"],
         )
 
-        callbacks, ebops_capture = build_callbacks(early_stopping_patience, quantize, save, model_path)
+        callbacks, ebops_capture = build_callbacks(
+            early_stopping_patience, quantize, save, model_path
+        )
 
         if do_train:
-            print(f"Starting training for {num_particles} particles, {num_feats} features with early stopping {early_stopping_patience} and {'with' if quantize else 'without'} quantization ... ")
-            history = model.fit(train_gen, validation_data=val_gen, epochs=num_epochs, callbacks=callbacks)
+            print(
+                f"Starting training for {num_particles} particles, {num_feats} features with early stopping {early_stopping_patience} and {'with' if quantize else 'without'} quantization ... "
+            )
+            history = model.fit(
+                train_gen,
+                validation_data=val_gen,
+                epochs=num_epochs,
+                callbacks=callbacks,
+            )
 
             if save:
                 save_loss_acc(history.history, num_particles, num_feats, output_path)
                 plot_loss_acc(history.history, num_particles, num_feats, plot_path)
 
-        run_post_training_pipeline(model, train_gen, test_gen, quantize, save, model_path, eval_results_path, ebops_capture.best_ebops)
+        run_post_training_pipeline(
+            model,
+            train_gen,
+            test_gen,
+            quantize,
+            save,
+            model_path,
+            eval_results_path,
+            ebops_capture.best_ebops,
+        )
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train HGQJetFormer")
-    parser.add_argument("--num_particles", type=int, default=8, help="Number of jet constituents")
-    parser.add_argument("--num_feats", type=int, default=3, choices=[3, 16], help="Number of features per constituent")
-    parser.add_argument("--num_epochs", type=int, default=25, help="Total training epochs")
-    parser.add_argument("--batch_size", type=int, default=256, help="Training batch size")
-    parser.add_argument("--experiment", type=str, default=None, help="Name of the experiment folder")
-    parser.add_argument("--quantize", action=argparse.BooleanOptionalAction, default=False, help="Enable HGQ2 quantization")
+    parser.add_argument(
+        "--num_particles", type=int, default=8, help="Number of jet constituents"
+    )
+    parser.add_argument(
+        "--num_feats",
+        type=int,
+        default=3,
+        choices=[3, 16],
+        help="Number of features per constituent",
+    )
+    parser.add_argument(
+        "--num_epochs", type=int, default=25, help="Total training epochs"
+    )
+    parser.add_argument(
+        "--batch_size", type=int, default=256, help="Training batch size"
+    )
+    parser.add_argument(
+        "--experiment", type=str, default=None, help="Name of the experiment folder"
+    )
+    parser.add_argument(
+        "--quantize",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Enable HGQ2 quantization",
+    )
     args = parser.parse_args()
 
     train(
