@@ -92,16 +92,16 @@ def build_hgq_jetformer(
 
     # 4. Explicitly bound the float32 bias output back into the integer domain
     # before it enters the Transformer blocks.
-    quantized_cls_tokens = Quantizer(name="cls_quantizer")(raw_cls_tokens)
+    if quantize:
+        quantized_cls_tokens = Quantizer(name="cls_quantizer")(raw_cls_tokens)
+    else:
+        quantized_cls_tokens = raw_cls_tokens
 
     # 5. Route the purely quantized tensors into the sequence block.
     x = keras.layers.Concatenate(axis=1, name="cls_token_injection")(
         [quantized_cls_tokens, x]
     )
     # ==========================================
-
-    if quantize:
-        x = Quantizer(name="entry_quantizer")(x)
 
     # 4. Pass through Transformer Encoder blocks
     for i in range(num_transformers):
@@ -126,26 +126,26 @@ def build_hgq_jetformer(
 
     # Anchor the structural name for Alkaid's routing trace.
     # The 'linear' activation is a mathematical identity (f(x) = x).
+    # TODO: Investigate this claim
     # It incurs zero hardware cost and will be optimized out by Alkaid
     # while preserving the "extract_cls" boundary marker in the netlist.
     cls_out = keras.layers.Activation("linear", name="extract_cls")(raw_slice)
 
     # 6. Final Normalization
-    if quantize:
-        # cls_out = QBatchNormalization(axis=-1, name="final_norm", epsilon=1e-5)(cls_out)
-        cls_out = cls_out
-    elif normalization == "Batch":
-        cls_out = keras.layers.BatchNormalization(
-            axis=-1, name="final_norm", momentum=0.9, epsilon=1e-5
-        )(cls_out)
-    elif normalization == "Layer":
-        cls_out = keras.layers.LayerNormalization(axis=-1, name="final_norm")(cls_out)
-    else:
-        cls_out = keras.layers.BatchNormalization(
-            axis=-1, name="final_norm", momentum=0.9, epsilon=1e-5
-        )(cls_out)
+    if not quantize:
+        if normalization == "Batch":
+            cls_out = keras.layers.BatchNormalization(
+                axis=-1, name="final_norm", momentum=0.9, epsilon=1e-5
+            )(cls_out)
+        elif normalization == "Layer":
+            cls_out = keras.layers.LayerNormalization(axis=-1, name="final_norm")(cls_out)
+        else:
+            cls_out = keras.layers.BatchNormalization(
+                axis=-1, name="final_norm", momentum=0.9, epsilon=1e-5
+            )(cls_out)
 
     # 7. Classification Head
+    # TODO Implement single instance in new file and then replace existing instances in codebase with a call
     parity_initializer = keras.initializers.VarianceScaling(
         scale=1 / 3, mode="fan_in", distribution="uniform"
     )
