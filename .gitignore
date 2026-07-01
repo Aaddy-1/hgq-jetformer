@@ -1,9 +1,8 @@
 __pycache__
-.gemini
+.agents/
+.gemini/
 data/
 GEMINI.md
 models/
 outputs/
 experiment/
-AGY.md
-.agents/

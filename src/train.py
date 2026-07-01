@@ -38,6 +38,36 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 # Define classes for the 150-particle dataset
 CLASSES = ["Gluon", "Light_quarks", "W_boson", "Z_boson", "Top_quark"]
 
+class EbopsCaptureCallback(keras.callbacks.Callback):
+    def __init__(self):
+        super().__init__()
+        self.best_val_loss = float('inf')
+        self.best_ebops = None
+
+    def on_epoch_end(self, epoch, logs=None):
+        logs = logs or {}
+        val_loss = logs.get('val_loss')
+        ebops = logs.get('ebops')
+        if val_loss is not None and val_loss < self.best_val_loss:
+            self.best_val_loss = val_loss
+            if ebops is not None:
+                self.best_ebops = float(ebops)
+
+def extract_model_metadata(model, best_ebops):
+    layers_metadata = []
+    for layer in model.layers:
+        layers_metadata.append({
+            "name": layer.name,
+            "type": layer.__class__.__name__,
+            "output_shape": str(layer.output_shape),
+            "params": int(layer.count_params())
+        })
+    return {
+        "best_ebops": best_ebops,
+        "total_parameters": int(model.count_params()),
+        "layers": layers_metadata
+    }
+
 def setup_data_generators(num_particles, num_feats, batch_size, val_ratio=0.1):
     base_path = os.path.join(PROCESSED_DIR, str(num_particles), f"{num_feats}f")
     train_h5_path = os.path.join(base_path, "train.h5")
@@ -63,10 +93,16 @@ def setup_data_generators(num_particles, num_feats, batch_size, val_ratio=0.1):
     )
     return train_gen, val_gen, test_gen
 
-def save_final_evaluation(acc, class_accs, aucs, classes, filepath):
-    results = {"overall_accuracy": float(acc), "per_class_metrics": {}}
+def save_final_evaluation(acc, class_accs, aucs, classes, metadata, filepath):
+    results = {
+        "performance": {
+            "overall_accuracy": float(acc),
+            "per_class_metrics": {}
+        },
+        "metadata": metadata
+    }
     for i, class_name in enumerate(classes):
-        results["per_class_metrics"][class_name] = {
+        results["performance"]["per_class_metrics"][class_name] = {
             "accuracy": float(class_accs[i]) if not np.isnan(class_accs[i]) else None,
             "auc": float(aucs[i]) if aucs[i] is not None else None,
         }
@@ -158,6 +194,9 @@ def resolve_experiment_paths(experiment: str, quantize: bool) -> tuple[str, str]
 
 def build_callbacks(early_stopping_patience: int, quantize: bool, save: bool, model_path: str):
     callbacks = []
+    ebops_capture = EbopsCaptureCallback()
+    callbacks.append(ebops_capture)
+
     if early_stopping_patience > 0:
         callbacks.append(
             keras.callbacks.EarlyStopping(
@@ -181,9 +220,9 @@ def build_callbacks(early_stopping_patience: int, quantize: bool, save: bool, mo
                 filepath=model_path, monitor="val_loss", save_best_only=True
             )
         )
-    return callbacks
+    return callbacks, ebops_capture
 
-def run_post_training_pipeline(model, train_gen, test_gen, quantize: bool, save: bool, model_path: str, eval_results_path: str):
+def run_post_training_pipeline(model, train_gen, test_gen, quantize: bool, save: bool, model_path: str, eval_results_path: str, best_ebops: float):
     print("\nLoading Best Checkpoint Weights...")
     if save and model_path is not None:
         try:
@@ -203,8 +242,9 @@ def run_post_training_pipeline(model, train_gen, test_gen, quantize: bool, save:
     test_acc, test_class_accs, test_aucs = evaluate(outputs, labels, CLASSES)
 
     if save and eval_results_path:
-        save_final_evaluation(test_acc, test_class_accs, test_aucs, CLASSES, eval_results_path)
-        print(f"Final metrics saved to: {eval_results_path}")
+        metadata = extract_model_metadata(model, best_ebops)
+        save_final_evaluation(test_acc, test_class_accs, test_aucs, CLASSES, metadata, eval_results_path)
+        print(f"Final metrics and metadata saved to: {eval_results_path}")
 
 def train(
     num_particles: int = 150,
@@ -268,7 +308,7 @@ def train(
             metrics=["sparse_categorical_accuracy"],
         )
 
-        callbacks = build_callbacks(early_stopping_patience, quantize, save, model_path)
+        callbacks, ebops_capture = build_callbacks(early_stopping_patience, quantize, save, model_path)
 
         if do_train:
             print(f"Starting training for {num_particles} particles, {num_feats} features with early stopping {early_stopping_patience} and {'with' if quantize else 'without'} quantization ... ")
@@ -278,7 +318,7 @@ def train(
                 save_loss_acc(history.history, num_particles, num_feats, output_path)
                 plot_loss_acc(history.history, num_particles, num_feats, plot_path)
 
-        run_post_training_pipeline(model, train_gen, test_gen, quantize, save, model_path, eval_results_path)
+        run_post_training_pipeline(model, train_gen, test_gen, quantize, save, model_path, eval_results_path, ebops_capture.best_ebops)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train HGQJetFormer")
