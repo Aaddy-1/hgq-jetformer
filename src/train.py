@@ -39,28 +39,34 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 CLASSES = ["Gluon", "Light_quarks", "W_boson", "Z_boson", "Top_quark"]
 
 class EbopsCaptureCallback(keras.callbacks.Callback):
+    """Captures the ebops of the best model (by val_loss) directly from HGQ layer attributes."""
     def __init__(self):
         super().__init__()
         self.best_val_loss = float('inf')
         self.best_ebops = None
 
+    def _get_ebops(self):
+        ebops = 0.0
+        for layer in self.model.layers:
+            if hasattr(layer, 'ebops'):
+                ebops += float(layer.ebops)
+        return ebops
+
     def on_epoch_end(self, epoch, logs=None):
         logs = logs or {}
         val_loss = logs.get('val_loss')
-        ebops = logs.get('ebops')
         if val_loss is not None and val_loss < self.best_val_loss:
             self.best_val_loss = val_loss
-            if ebops is not None:
-                self.best_ebops = float(ebops)
+            self.best_ebops = self._get_ebops()
 
 def extract_model_metadata(model, best_ebops):
     layers_metadata = []
     for layer in model.layers:
         try:
-            out_shape = str(layer.output_shape)
-        except AttributeError:
+            out_shape = str(layer.output.shape)
+        except (AttributeError, ValueError):
             out_shape = "N/A"
-            
+
         layers_metadata.append({
             "name": layer.name,
             "type": layer.__class__.__name__,
