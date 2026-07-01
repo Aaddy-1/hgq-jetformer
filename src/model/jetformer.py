@@ -4,8 +4,8 @@ from keras import layers
 from hgq.layers import QBatchNormalization, Quantizer, QDense
 
 # Assuming imports from your architecture definitions:
-from ..layers.embedding import apply_hgq_embedding
-from ..layers.transformer import apply_hgq_transformer_block
+from .layers.embedding import apply_hgq_embedding
+from .layers.transformer import apply_hgq_transformer_block
 
 from hgq.layers import Quantizer
 from keras import ops

@@ -20,9 +20,9 @@ from hgq.utils.sugar.beta_pid import BetaPID
 from hgq.regularizers import MonoL1
 
 # Relative imports
-from src.dataset import JetFormerDataGenerator
-from src.models.jetformer import build_hgq_jetformer
-from src.onecyclelr import OneCycleLR, build_lr_schedule
+from src.data.dataset import JetFormerDataGenerator
+from src.model.jetformer import build_hgq_jetformer
+from src.training.onecyclelr import OneCycleLR, build_lr_schedule
 
 # Path variables
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
