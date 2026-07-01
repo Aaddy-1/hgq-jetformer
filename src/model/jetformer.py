@@ -144,11 +144,8 @@ def build_hgq_jetformer(
                 axis=-1, name="final_norm", momentum=0.9, epsilon=1e-5
             )(cls_out)
 
-    # 7. Classification Head
-    # TODO Implement single instance in new file and then replace existing instances in codebase with a call
-    parity_initializer = keras.initializers.VarianceScaling(
-        scale=1 / 3, mode="fan_in", distribution="uniform"
-    )
+    from .initializers import get_parity_initializer
+    parity_initializer = get_parity_initializer()
 
     dense_cls = keras.layers.Dense
     logits = dense_cls(

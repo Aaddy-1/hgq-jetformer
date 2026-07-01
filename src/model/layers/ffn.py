@@ -17,9 +17,8 @@ def apply_hgq_feed_forward(
     dense_cls = QDense if quantize else keras.layers.Dense
     activation_fn = keras.activations.get(activation.lower())
 
-    parity_initializer = keras.initializers.VarianceScaling(
-        scale=1 / 3, mode="fan_in", distribution="uniform"
-    )
+    from ..initializers import get_parity_initializer
+    parity_initializer = get_parity_initializer()
 
     def apply_norm(tensor, name_suffix):
         if not quantize:
