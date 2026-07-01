@@ -26,7 +26,7 @@ from src.training.onecyclelr import OneCycleLR, build_lr_schedule
 
 # Path variables
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
+PROJECT_ROOT = os.path.dirname(os.path.dirname(SCRIPT_DIR))
 DATA_DIR = os.path.join(PROJECT_ROOT, "data")
 PROCESSED_DIR = os.path.join(DATA_DIR, "processed")
 MODEL_DIR = os.path.join(PROJECT_ROOT, "models")
@@ -91,6 +91,10 @@ def setup_data_generators(num_particles, num_feats, batch_size, val_ratio=0.1):
     base_path = os.path.join(PROCESSED_DIR, str(num_particles), f"{num_feats}f")
     train_h5_path = os.path.join(base_path, "train.h5")
     test_h5_path = os.path.join(base_path, "test.h5")
+
+    print("BASE PATH:", base_path)
+    print("================================")
+    print("TRAIN H5 PATH:", train_h5_path)
 
     import h5py
 
