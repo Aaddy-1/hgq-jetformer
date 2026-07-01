@@ -22,19 +22,16 @@ def apply_hgq_feed_forward(
     )
 
     def apply_norm(tensor, name_suffix):
-        if quantize:
-            # return QBatchNormalization(
-            #     axis=-1, epsilon=1e-5, name=f"{prefix}_{name_suffix}"
-            # )(tensor, training=training)
-            return tensor
-        if normalization == "Batch":
-            return keras.layers.BatchNormalization(
-                axis=-1, momentum=momentum, epsilon=1e-5, name=f"{prefix}_{name_suffix}"
-            )(tensor, training=training)
-        else:
-            return keras.layers.LayerNormalization(
-                axis=-1, name=f"{prefix}_{name_suffix}"
-            )(tensor)
+        if not quantize:
+            if normalization == "Batch":
+                return keras.layers.BatchNormalization(
+                    axis=-1, momentum=momentum, epsilon=1e-5, name=f"{prefix}_{name_suffix}"
+                )(tensor, training=training)
+            else:
+                return keras.layers.LayerNormalization(
+                    axis=-1, name=f"{prefix}_{name_suffix}"
+                )(tensor)
+        return tensor
 
     # Block 1: Norm -> Linear (Expansion) -> Activation
     x = apply_norm(x, "norm1")
