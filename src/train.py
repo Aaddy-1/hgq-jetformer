@@ -56,10 +56,15 @@ class EbopsCaptureCallback(keras.callbacks.Callback):
 def extract_model_metadata(model, best_ebops):
     layers_metadata = []
     for layer in model.layers:
+        try:
+            out_shape = str(layer.output_shape)
+        except AttributeError:
+            out_shape = "N/A"
+            
         layers_metadata.append({
             "name": layer.name,
             "type": layer.__class__.__name__,
-            "output_shape": str(layer.output_shape),
+            "output_shape": out_shape,
             "params": int(layer.count_params())
         })
     return {
