@@ -122,8 +122,9 @@ def setup_data_generators(num_particles, num_feats, batch_size, val_ratio=0.1):
     return train_gen, val_gen, test_gen
 
 
-def save_final_evaluation(acc, class_accs, aucs, classes, metadata, filepath):
+def save_final_evaluation(acc, class_accs, aucs, classes, metadata, config, filepath):
     results = {
+        "configuration": config,
         "performance": {"overall_accuracy": float(acc), "per_class_metrics": {}},
         "metadata": metadata,
     }
@@ -272,6 +273,7 @@ def run_post_training_pipeline(
     model_path: str,
     eval_results_path: str,
     best_ebops: float,
+    config: dict,
 ):
     print("\nLoading Best Checkpoint Weights...")
     if save and model_path is not None:
@@ -294,7 +296,7 @@ def run_post_training_pipeline(
     if save and eval_results_path:
         metadata = extract_model_metadata(model, best_ebops)
         save_final_evaluation(
-            test_acc, test_class_accs, test_aucs, CLASSES, metadata, eval_results_path
+            test_acc, test_class_accs, test_aucs, CLASSES, metadata, config, eval_results_path
         )
         print(f"Final metrics and metadata saved to: {eval_results_path}")
 
@@ -358,16 +360,22 @@ def train(
     layer_scope = LayerConfigScope(enable_ebops=True, beta0=5e-8)
 
     with quant_scope, layer_scope:
+        config = {
+            "in_dim": num_feats,
+            "embed_dim": embbed_dim,
+            "num_heads": num_heads,
+            "num_classes": len(CLASSES),
+            "num_transformers": num_transformers,
+            "dropout": dropout,
+            "num_particles": num_particles,
+            "activation": activation,
+            "normalization": normalization,
+            "quantize": quantize,
+        }
+
         print("[DEBUG] Model Args: ")
-        print(
-            f"in_dim={num_feats}, embed_dim={embbed_dim}, num_heads={num_heads}, num_classes={len(CLASSES)}"
-        )
-        print(
-            f"num_transformers={num_transformers}, dropout={dropout}, num_particles={num_particles}"
-        )
-        print(
-            f"activation={activation}, normalization={normalization}, quantize={quantize}"
-        )
+        for k, v in config.items():
+            print(f"  {k}={v}")
 
         model = build_hgq_jetformer(
             in_dim=num_feats,
@@ -419,6 +427,7 @@ def train(
             model_path,
             eval_results_path,
             ebops_capture.best_ebops,
+            config,
         )
 
 
