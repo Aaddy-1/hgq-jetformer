@@ -222,6 +222,9 @@ def resolve_experiment_paths(experiment: str, quantize: bool) -> tuple[str, str]
     if quantize:
         current_model_dir = os.path.join(current_model_dir, "quantized")
         current_output_dir = os.path.join(current_output_dir, "quantized")
+    else:
+        current_model_dir = os.path.join(current_model_dir, "unquantized")
+        current_output_dir = os.path.join(current_output_dir, "unquantized")
 
     os.makedirs(current_model_dir, exist_ok=True)
     os.makedirs(current_output_dir, exist_ok=True)
