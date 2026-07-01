@@ -296,7 +296,13 @@ def run_post_training_pipeline(
     if save and eval_results_path:
         metadata = extract_model_metadata(model, best_ebops)
         save_final_evaluation(
-            test_acc, test_class_accs, test_aucs, CLASSES, metadata, config, eval_results_path
+            test_acc,
+            test_class_accs,
+            test_aucs,
+            CLASSES,
+            metadata,
+            config,
+            eval_results_path,
         )
         print(f"Final metrics and metadata saved to: {eval_results_path}")
 
