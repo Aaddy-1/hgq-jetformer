@@ -6,7 +6,7 @@ from hgq.regularizers import MonoL1
 from alkaid.converter import trace_model
 from alkaid.codegen import RTLModel
 
-from src.models.jetformer import build_hgq_jetformer
+from src.model.jetformer import build_hgq_jetformer
 
 print("--- 1. Native Architectural Reconstruction ---")
 quant_scope = QuantizerConfigScope(
