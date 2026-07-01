@@ -24,19 +24,17 @@ def apply_hgq_transformer_block(
     head_dim = latent_dim // num_heads
 
     # 1. Pre-Normalization (Replacing the internal norm of HGQSelfAttention)
-    if quantize:
-        # norm_x = QBatchNormalization(
-        #     axis=-1, epsilon=1e-5, name=f"{block_name}_attn_norm"
-        # )(x, training=training)
-        norm_x = x
-    elif normalization == "Batch":
-        norm_x = keras.layers.BatchNormalization(
-            axis=-1, momentum=momentum, epsilon=1e-5, name=f"{block_name}_attn_norm"
-        )(x, training=training)
+    if not quantize:
+        if normalization == "Batch":
+            norm_x = keras.layers.BatchNormalization(
+                axis=-1, momentum=momentum, epsilon=1e-5, name=f"{block_name}_attn_norm"
+            )(x, training=training)
+        else:
+            norm_x = keras.layers.LayerNormalization(
+                axis=-1, name=f"{block_name}_attn_norm"
+            )(x)
     else:
-        norm_x = keras.layers.LayerNormalization(
-            axis=-1, name=f"{block_name}_attn_norm"
-        )(x)
+        norm_x = x
 
     # 2. Library-Native Quantized Attention
     # QMultiHeadAttention automatically instantiates Q/K/V QDense layers,
@@ -51,9 +49,9 @@ def apply_hgq_transformer_block(
         name=f"{block_name}_q_attention",
     )(norm_x, norm_x, training=training)
 
-    if quantize:
-        # Establishes strict fractional geometry for the tiny attention update without scaling variance
-        attn_out = Quantizer(name=f"{block_name}_attn_fract_align")(attn_out)
+    # if quantize:
+    #     # Establishes strict fractional geometry for the tiny attention update without scaling variance
+    #     attn_out = Quantizer(name=f"{block_name}_attn_fract_align")(attn_out)
 
     # 3. First Residual Connection (attn_out = self_attention(x) + x)
     add_cls = QAdd if quantize else keras.layers.Add
@@ -73,10 +71,7 @@ def apply_hgq_transformer_block(
         training=training,
     )
 
-    # # 5. Asymmetric Radix Alignment & Second Residual Connection
-    # if quantize:
-    #     # Establishes strict fractional geometry for the tiny FFN update without scaling variance
-    #     ffn_out = Quantizer(name=f"{block_name}_ffn_fract_align")(ffn_out)
+
 
     # 5. Second Residual Connection (out = ffn(attn_out) + attn_out)
     res_out = add_cls(name=f"{block_name}_ffn_residual")([ffn_out, res_x])
