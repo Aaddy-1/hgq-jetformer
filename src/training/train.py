@@ -384,6 +384,9 @@ def train(
             "activation": activation,
             "normalization": normalization,
             "quantize": quantize,
+            "num_epochs": num_epochs,
+            "batch_size": batch_size,
+            "early_stopping_patience": early_stopping_patience,
         }
 
         print("[DEBUG] Model Args: ")
@@ -479,7 +482,7 @@ if __name__ == "__main__":
         num_epochs=args.num_epochs,
         batch_size=args.batch_size,
         num_transformers=3,
-        early_stopping_patience=15,
+        early_stopping_patience=100,
         val_ratio=0.1,
         experiment=args.experiment,
         quantize=args.quantize,
