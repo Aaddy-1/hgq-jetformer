@@ -147,7 +147,7 @@ def build_hgq_jetformer(
     from .initializers import get_parity_initializer
     parity_initializer = get_parity_initializer()
 
-    dense_cls = keras.layers.Dense
+    dense_cls = QDense if quantize else keras.layers.Dense
     logits = dense_cls(
         num_classes,
         kernel_initializer=parity_initializer,
