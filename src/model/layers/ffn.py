@@ -30,7 +30,10 @@ def apply_hgq_feed_forward(
                 return keras.layers.LayerNormalization(
                     axis=-1, name=f"{prefix}_{name_suffix}"
                 )(tensor)
-        return tensor
+        else:
+            return QBatchNormalization(
+                axis=-1, momentum=momentum, epsilon=1e-5, name=f"{prefix}_{name_suffix}"
+            )(tensor, training=training)
 
     # Block 1: Norm -> Linear (Expansion) -> Activation
     x = apply_norm(x, "norm1")
