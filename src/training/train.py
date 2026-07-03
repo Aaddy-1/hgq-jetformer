@@ -46,6 +46,7 @@ class EbopsCaptureCallback(keras.callbacks.Callback):
         super().__init__()
         self.best_val_loss = float("inf")
         self.best_ebops = None
+        self.best_epoch = None
 
     def _get_ebops(self):
         ebops = 0.0
@@ -62,9 +63,10 @@ class EbopsCaptureCallback(keras.callbacks.Callback):
         if val_loss is not None and val_loss < self.best_val_loss:
             self.best_val_loss = val_loss
             self.best_ebops = self._get_ebops()
+            self.best_epoch = epoch
 
 
-def extract_model_metadata(model, best_ebops):
+def extract_model_metadata(model, best_ebops, best_epoch):
     layers_metadata = []
     for layer in model.layers:
         try:
@@ -81,7 +83,8 @@ def extract_model_metadata(model, best_ebops):
             }
         )
     return {
-        "best_ebops": best_ebops,
+        "ebops": best_ebops,
+        "best_epoch": best_epoch,
         "total_parameters": int(model.count_params()),
         "layers": layers_metadata,
     }
@@ -280,6 +283,7 @@ def run_post_training_pipeline(
     model_path: str,
     eval_results_path: str,
     best_ebops: float,
+    best_epoch: int,
     config: dict,
 ):
     print("\nLoading Best Checkpoint Weights...")
@@ -301,7 +305,7 @@ def run_post_training_pipeline(
     test_acc, test_class_accs, test_aucs = evaluate(outputs, labels, CLASSES)
 
     if save and eval_results_path:
-        metadata = extract_model_metadata(model, best_ebops)
+        metadata = extract_model_metadata(model, best_ebops, best_epoch)
         save_final_evaluation(
             test_acc,
             test_class_accs,
@@ -443,6 +447,7 @@ def train(
             model_path,
             eval_results_path,
             ebops_capture.best_ebops,
+            ebops_capture.best_epoch,
             config,
         )
 
