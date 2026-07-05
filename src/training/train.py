@@ -40,13 +40,15 @@ CLASSES = ["Gluon", "Light_quarks", "W_boson", "Z_boson", "Top_quark"]
 
 
 class EbopsCaptureCallback(keras.callbacks.Callback):
-    """Captures the ebops of the best model (by val_loss) directly from HGQ layer attributes."""
+    """Captures the ebops of the best model and saves it, starting after a warmup phase."""
 
-    def __init__(self):
+    def __init__(self, filepath=None, start_from_epoch=15):
         super().__init__()
-        self.best_val_loss = float("inf")
+        self.best_val_acc = -float("inf")
         self.best_ebops = None
         self.best_epoch = None
+        self.start_from_epoch = start_from_epoch
+        self.filepath = filepath
 
     def _get_ebops(self):
         ebops = 0.0
@@ -58,12 +60,17 @@ class EbopsCaptureCallback(keras.callbacks.Callback):
         return ebops if found else None
 
     def on_epoch_end(self, epoch, logs=None):
+        if epoch < self.start_from_epoch:
+            return
+            
         logs = logs or {}
-        val_loss = logs.get("val_loss")
-        if val_loss is not None and val_loss < self.best_val_loss:
-            self.best_val_loss = val_loss
+        val_acc = logs.get("val_sparse_categorical_accuracy")
+        if val_acc is not None and val_acc > self.best_val_acc:
+            self.best_val_acc = val_acc
             self.best_ebops = self._get_ebops()
             self.best_epoch = epoch
+            if self.filepath:
+                self.model.save(self.filepath)
 
 
 def extract_model_metadata(model, best_ebops, best_epoch):
@@ -246,29 +253,26 @@ def build_callbacks(
     if early_stopping_patience > 0:
         callbacks.append(
             keras.callbacks.EarlyStopping(
-                monitor="val_loss",
+                monitor="val_sparse_categorical_accuracy",
+                mode="max",
                 patience=early_stopping_patience,
                 min_delta=1e-4,
                 restore_best_weights=True,
+                start_from_epoch=15 if quantize else 0
             )
         )
     callbacks.append(
         keras.callbacks.ReduceLROnPlateau(
-            monitor="val_loss", factor=0.8, patience=5, min_lr=1e-4
+            monitor="val_sparse_categorical_accuracy", mode="max", factor=0.8, patience=5, min_lr=1e-4
         )
     )
     if quantize:
         callbacks.append(BetaPID(p=1, i=0.1, d=0, target_ebops=350000.0, warmup=5))
 
-    if save and model_path is not None:
-        callbacks.append(
-            keras.callbacks.ModelCheckpoint(
-                filepath=model_path, monitor="val_loss", save_best_only=True
-            )
-        )
-
-    # EbopsCaptureCallback runs last to ensure BetaPID has updated layer states
-    ebops_capture = EbopsCaptureCallback()
+    ebops_capture = EbopsCaptureCallback(
+        filepath=model_path if save else None,
+        start_from_epoch=15 if quantize else 0
+    )
     callbacks.append(ebops_capture)
 
     return callbacks, ebops_capture
