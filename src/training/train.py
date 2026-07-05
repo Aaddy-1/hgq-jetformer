@@ -39,21 +39,16 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 CLASSES = ["Gluon", "Light_quarks", "W_boson", "Z_boson", "Top_quark"]
 
 
-class HardwareAwareCheckpoint(keras.callbacks.Callback):
-    """Handles early stopping, checkpointing, and EBOPs capture after a warmup phase."""
+class EbopsCaptureCallback(keras.callbacks.Callback):
+    """Captures the ebops of the best model and saves it, starting after a warmup phase."""
 
-    def __init__(self, filepath, monitor="val_sparse_categorical_accuracy", mode="max", patience=100, start_from_epoch=15):
+    def __init__(self, filepath=None, start_from_epoch=15):
         super().__init__()
-        self.filepath = filepath
-        self.monitor = monitor
-        self.mode = mode
-        self.patience = patience
-        self.start_from_epoch = start_from_epoch
-        self.best_metric = -float("inf") if mode == "max" else float("inf")
+        self.best_val_acc = -float("inf")
         self.best_ebops = None
         self.best_epoch = None
-        self.wait = 0
-        self.best_weights = None
+        self.start_from_epoch = start_from_epoch
+        self.filepath = filepath
 
     def _get_ebops(self):
         ebops = 0.0
@@ -65,38 +60,17 @@ class HardwareAwareCheckpoint(keras.callbacks.Callback):
         return ebops if found else None
 
     def on_epoch_end(self, epoch, logs=None):
-        logs = logs or {}
-        current = logs.get(self.monitor)
-        
         if epoch < self.start_from_epoch:
             return
-            
-        if current is None:
-            return
 
-        improved = False
-        if self.mode == "max" and current > self.best_metric:
-            improved = True
-        elif self.mode == "min" and current < self.best_metric:
-            improved = True
-
-        if improved:
-            self.best_metric = current
+        logs = logs or {}
+        val_acc = logs.get("val_sparse_categorical_accuracy")
+        if val_acc is not None and val_acc > self.best_val_acc:
+            self.best_val_acc = val_acc
             self.best_ebops = self._get_ebops()
             self.best_epoch = epoch
-            self.wait = 0
-            self.best_weights = self.model.get_weights()
             if self.filepath:
-                self.model.save_weights(self.filepath)
-            print(f"\nEpoch {epoch+1}: {self.monitor} improved to {current:.5f}, saving model.")
-        else:
-            self.wait += 1
-            if self.patience > 0 and self.wait >= self.patience:
-                self.model.stop_training = True
-                print(f"\nEpoch {epoch+1}: early stopping triggered.")
-                if self.best_weights is not None:
-                    print(f"Restoring model weights from the end of the best epoch ({self.best_epoch + 1}).")
-                    self.model.set_weights(self.best_weights)
+                self.model.save(self.filepath)
 
 
 def extract_model_metadata(model, best_ebops, best_epoch):
@@ -276,21 +250,31 @@ def build_callbacks(
 ):
     callbacks = []
 
+    if early_stopping_patience > 0:
+        callbacks.append(
+            keras.callbacks.EarlyStopping(
+                monitor="val_sparse_categorical_accuracy",
+                mode="max",
+                patience=early_stopping_patience,
+                min_delta=1e-4,
+                restore_best_weights=True,
+                start_from_epoch=15 if quantize else 0,
+            )
+        )
     callbacks.append(
         keras.callbacks.ReduceLROnPlateau(
-            monitor="val_sparse_categorical_accuracy", mode="max", factor=0.8, patience=5, min_lr=1e-4
+            monitor="val_sparse_categorical_accuracy",
+            mode="max",
+            factor=0.8,
+            patience=5,
+            min_lr=1e-4,
         )
     )
     if quantize:
         callbacks.append(BetaPID(p=1, i=0.1, d=0, target_ebops=350000.0, warmup=5))
 
-    # HardwareAwareCheckpoint handles early stopping, checkpointing, and EBOPs capture
-    ebops_capture = HardwareAwareCheckpoint(
-        filepath=model_path if save else None,
-        monitor="val_sparse_categorical_accuracy",
-        mode="max",
-        patience=early_stopping_patience,
-        start_from_epoch=15 if quantize else 0
+    ebops_capture = EbopsCaptureCallback(
+        filepath=model_path if save else None, start_from_epoch=15 if quantize else 0
     )
     callbacks.append(ebops_capture)
 
