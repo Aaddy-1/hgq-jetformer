@@ -258,7 +258,7 @@ def build_callbacks(
                 patience=early_stopping_patience,
                 min_delta=1e-4,
                 restore_best_weights=True,
-                start_from_epoch=15 if quantize else 0,
+                start_from_epoch=60 if quantize else 0,
             )
         )
     callbacks.append(
@@ -274,7 +274,7 @@ def build_callbacks(
         callbacks.append(BetaPID(p=1, i=0.1, d=0, target_ebops=350000.0, warmup=5))
 
     ebops_capture = EbopsCaptureCallback(
-        filepath=model_path if save else None, start_from_epoch=15 if quantize else 0
+        filepath=model_path if save else None, start_from_epoch=60 if quantize else 0
     )
     callbacks.append(ebops_capture)
 
