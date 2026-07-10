@@ -34,9 +34,11 @@ def apply_hgq_transformer_block(
                 axis=-1, name=f"{block_name}_attn_norm"
             )(x)
     else:
-        norm_x = QBatchNormalization(
-            axis=-1, momentum=momentum, epsilon=1e-5, name=f"{block_name}_attn_norm"
-        )(x, training=training)
+        # [ABLATION] QBatchNormalization removed from quantized path.
+        # norm_x = QBatchNormalization(
+        #     axis=-1, momentum=momentum, epsilon=1e-5, name=f"{block_name}_attn_norm"
+        # )(x, training=training)
+        norm_x = x
 
     # 2. Library-Native Quantized Attention
     # QMultiHeadAttention automatically instantiates Q/K/V QDense layers,
