@@ -31,9 +31,11 @@ def apply_hgq_feed_forward(
                     axis=-1, name=f"{prefix}_{name_suffix}"
                 )(tensor)
         else:
-            return QBatchNormalization(
-                axis=-1, momentum=momentum, epsilon=1e-5, name=f"{prefix}_{name_suffix}"
-            )(tensor, training=training)
+            # [ABLATION] QBatchNormalization removed from quantized path.
+            # return QBatchNormalization(
+            #     axis=-1, momentum=momentum, epsilon=1e-5, name=f"{prefix}_{name_suffix}"
+            # )(tensor, training=training)
+            return tensor
 
     # Block 1: Norm -> Linear (Expansion) -> Activation
     x = apply_norm(x, "norm1")
