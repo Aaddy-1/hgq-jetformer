@@ -18,6 +18,7 @@ from hgq.config import QuantizerConfigScope, LayerConfigScope
 from hgq.utils import trace_minmax
 from hgq.utils.sugar.beta_pid import BetaPID
 from hgq.regularizers import MonoL1
+from hgq.utils.sugar.early_stopping_ebops import EarlyStoppingWithEbopsThres
 
 # Relative imports
 from src.data.dataset import JetFormerDataGenerator
@@ -38,17 +39,24 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 # Define classes for the 150-particle dataset
 CLASSES = ["Gluon", "Light_quarks", "W_boson", "Z_boson", "Top_quark"]
 
+# Shared training constant: epoch after which EBOPs and val_loss
+# are expected to have stabilized under PID control.
+EBOPS_WARMUP_EPOCH = 75
+
 
 class EbopsCaptureCallback(keras.callbacks.Callback):
-    """Captures the ebops of the best model and saves it, starting after a warmup phase."""
+    """Captures the EBOPs and accuracy metadata of the best model.
 
-    def __init__(self, filepath=None, start_from_epoch=15):
+    Note: Model saving is handled by EarlyStoppingWithEbopsThres
+    (restore_best_weights=True). This callback only tracks metadata.
+    """
+
+    def __init__(self, start_from_epoch=EBOPS_WARMUP_EPOCH):
         super().__init__()
         self.best_val_acc = -float("inf")
         self.best_ebops = None
         self.best_epoch = None
         self.start_from_epoch = start_from_epoch
-        self.filepath = filepath
 
     def _get_ebops(self):
         ebops = 0.0
@@ -69,8 +77,6 @@ class EbopsCaptureCallback(keras.callbacks.Callback):
             self.best_val_acc = val_acc
             self.best_ebops = self._get_ebops()
             self.best_epoch = epoch
-            if self.filepath:
-                self.model.save(self.filepath)
 
 
 def extract_model_metadata(model, best_ebops, best_epoch):
@@ -245,36 +251,68 @@ def resolve_experiment_paths(experiment: str, quantize: bool) -> tuple[str, str]
     return current_model_dir, current_output_dir
 
 
-def build_callbacks(
-    early_stopping_patience: int, quantize: bool, save: bool, model_path: str
-):
+def build_callbacks(early_stopping_patience: int, quantize: bool):
     callbacks = []
 
-    if early_stopping_patience > 0:
+    if quantize:
+        # --- Quantized Training Callbacks (Reference-aligned) ---
         callbacks.append(
-            keras.callbacks.EarlyStopping(
-                monitor="val_sparse_categorical_accuracy",
-                mode="max",
-                patience=early_stopping_patience,
-                min_delta=1e-4,
+            EarlyStoppingWithEbopsThres(
+                ebops_threshold=450000,
+                monitor="val_loss",
+                patience=150,
+                mode="min",
                 restore_best_weights=True,
-                start_from_epoch=60 if quantize else 0,
+                start_from_epoch=EBOPS_WARMUP_EPOCH,
             )
         )
-    callbacks.append(
-        keras.callbacks.ReduceLROnPlateau(
-            monitor="val_sparse_categorical_accuracy",
-            mode="max",
-            factor=0.8,
-            patience=5,
-            min_lr=1e-4,
+        callbacks.append(
+            keras.callbacks.ReduceLROnPlateau(
+                monitor="val_loss",
+                mode="min",
+                factor=0.8,
+                patience=50,
+                min_lr=1e-5,
+                cooldown=200,
+                min_delta=0.05,
+            )
         )
-    )
-    if quantize:
-        callbacks.append(BetaPID(p=1, i=0.1, d=0, target_ebops=350000.0, warmup=5))
+        callbacks.append(
+            BetaPID(
+                p=1,
+                i=0.1,
+                d=0,
+                target_ebops=350000.0,
+                init_beta=1e-10,
+                warmup=10,
+                max_beta=5e-6,
+                damp_beta_on_target=0.5,
+            )
+        )
+    else:
+        # --- Non-quantized Training Callbacks (Original) ---
+        if early_stopping_patience > 0:
+            callbacks.append(
+                keras.callbacks.EarlyStopping(
+                    monitor="val_sparse_categorical_accuracy",
+                    mode="max",
+                    patience=early_stopping_patience,
+                    min_delta=1e-4,
+                    restore_best_weights=True,
+                )
+            )
+        callbacks.append(
+            keras.callbacks.ReduceLROnPlateau(
+                monitor="val_sparse_categorical_accuracy",
+                mode="max",
+                factor=0.8,
+                patience=5,
+                min_lr=1e-4,
+            )
+        )
 
     ebops_capture = EbopsCaptureCallback(
-        filepath=model_path if save else None, start_from_epoch=60 if quantize else 0
+        start_from_epoch=EBOPS_WARMUP_EPOCH if quantize else 0
     )
     callbacks.append(ebops_capture)
 
@@ -287,29 +325,34 @@ def run_post_training_pipeline(
     test_gen,
     quantize: bool,
     save: bool,
-    model_path: str,
     eval_results_path: str,
     best_ebops: float,
     best_epoch: int,
     config: dict,
 ):
-    print("\nLoading Best Checkpoint Weights...")
-    if save and model_path is not None:
-        try:
-            model.load_weights(model_path)
-        except Exception as e:
-            print(f"Warning: Could not load weights from {model_path}. Error: {e}")
+    # Best weights are already restored by EarlyStoppingWithEbopsThres
+    # (restore_best_weights=True) or keras.callbacks.EarlyStopping.
 
     if quantize:
+        # --- Diagnostic: Evaluate BEFORE trace_minmax ---
+        print("\n[Diagnostic] Evaluating model BEFORE trace_minmax...")
+        pre_outputs = model.predict(test_gen)
+        pre_labels = np.concatenate([y for _, y in test_gen], axis=0)
+        pre_acc = accuracy_score(pre_labels, pre_outputs.argmax(axis=1))
+        print(f"[Diagnostic] Pre-trace_minmax accuracy: {pre_acc:.4f}")
+
         print("\n[HGQ] Initiating activation profiling for WRAP mode calibration...")
         x_calib = np.concatenate([next(iter(train_gen))[0] for _ in range(10)], axis=0)
         trace_minmax(model, x_calib)
-        print("[HGQ] Profiling complete. Integer boundaries securely calibrated.")
+        print("[HGQ] Profiling complete. Integer boundaries calibrated.")
 
-    print("\nExecuting Inference on Test Set...")
+    print("\nExecuting Final Inference on Test Set...")
     outputs = model.predict(test_gen)
     labels = np.concatenate([y for _, y in test_gen], axis=0)
     test_acc, test_class_accs, test_aucs = evaluate(outputs, labels, CLASSES)
+
+    if quantize:
+        print(f"\n[Diagnostic] trace_minmax accuracy delta: {test_acc - pre_acc:+.4f}")
 
     if save and eval_results_path:
         metadata = extract_model_metadata(model, best_ebops, best_epoch)
@@ -374,14 +417,12 @@ def train(
         current_output_dir, f"{num_particles}_{num_feats}f_metrics.json"
     )
 
-    optimizer = keras.optimizers.AdamW(
-        learning_rate=1e-4, weight_decay=1e-4, global_clipnorm=0.5
-    )
+    optimizer = keras.optimizers.AdamW(learning_rate=1e-3)
 
     quant_scope = QuantizerConfigScope(
         place="all", default_q_type="kbi", overflow_mode="WRAP", br=MonoL1(1e-8)
     )
-    layer_scope = LayerConfigScope(enable_ebops=True, beta0=5e-8)
+    layer_scope = LayerConfigScope(enable_ebops=True, beta0=1e-10)
 
     with quant_scope, layer_scope:
         config = {
@@ -426,9 +467,7 @@ def train(
             metrics=["sparse_categorical_accuracy"],
         )
 
-        callbacks, ebops_capture = build_callbacks(
-            early_stopping_patience, quantize, save, model_path
-        )
+        callbacks, ebops_capture = build_callbacks(early_stopping_patience, quantize)
 
         if do_train:
             print(
@@ -451,7 +490,6 @@ def train(
             test_gen,
             quantize,
             save,
-            model_path,
             eval_results_path,
             ebops_capture.best_ebops,
             ebops_capture.best_epoch,

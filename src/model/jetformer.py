@@ -144,9 +144,11 @@ def build_hgq_jetformer(
                 axis=-1, name="final_norm", momentum=0.9, epsilon=1e-5
             )(cls_out)
     else:
-        cls_out = QBatchNormalization(
-            axis=-1, momentum=0.9, epsilon=1e-5, name="final_norm"
-        )(cls_out)
+        # [ABLATION] QBatchNormalization removed from quantized path.
+        # cls_out = QBatchNormalization(
+        #     axis=-1, momentum=0.9, epsilon=1e-5, name="final_norm"
+        # )(cls_out)
+        pass
 
     from .initializers import get_parity_initializer
     parity_initializer = get_parity_initializer()
