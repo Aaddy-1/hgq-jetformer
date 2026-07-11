@@ -325,6 +325,7 @@ def run_post_training_pipeline(
     test_gen,
     quantize: bool,
     save: bool,
+    model_path: str,
     eval_results_path: str,
     best_ebops: float,
     best_epoch: int,
@@ -354,18 +355,22 @@ def run_post_training_pipeline(
     if quantize:
         print(f"\n[Diagnostic] trace_minmax accuracy delta: {test_acc - pre_acc:+.4f}")
 
-    if save and eval_results_path:
-        metadata = extract_model_metadata(model, best_ebops, best_epoch)
-        save_final_evaluation(
-            test_acc,
-            test_class_accs,
-            test_aucs,
-            CLASSES,
-            metadata,
-            config,
-            eval_results_path,
-        )
-        print(f"Final metrics and metadata saved to: {eval_results_path}")
+    if save:
+        if model_path:
+            model.save(model_path)
+            print(f"Final model saved to: {model_path}")
+        if eval_results_path:
+            metadata = extract_model_metadata(model, best_ebops, best_epoch)
+            save_final_evaluation(
+                test_acc,
+                test_class_accs,
+                test_aucs,
+                CLASSES,
+                metadata,
+                config,
+                eval_results_path,
+            )
+            print(f"Final metrics and metadata saved to: {eval_results_path}")
 
 
 def train(
@@ -490,6 +495,7 @@ def train(
             test_gen,
             quantize,
             save,
+            model_path,
             eval_results_path,
             ebops_capture.best_ebops,
             ebops_capture.best_epoch,
