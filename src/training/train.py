@@ -343,7 +343,8 @@ def run_post_training_pipeline(
         print(f"[Diagnostic] Pre-trace_minmax accuracy: {pre_acc:.4f}")
 
         print("\n[HGQ] Initiating activation profiling for WRAP mode calibration...")
-        x_calib = np.concatenate([next(iter(train_gen))[0] for _ in range(10)], axis=0)
+        it = iter(train_gen)
+        x_calib = np.concatenate([next(it)[0] for _ in range(10)], axis=0)
         trace_minmax(model, x_calib)
         print("[HGQ] Profiling complete. Integer boundaries calibrated.")
 
