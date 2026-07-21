@@ -43,15 +43,40 @@ def apply_hgq_transformer_block(
     # 2. Library-Native Quantized Attention
     # QMultiHeadAttention automatically instantiates Q/K/V QDense layers,
     # handles the softmax, and manages internal Quantizer traces perfectly.
-    attn_cls = QMultiHeadAttention if quantize else keras.layers.MultiHeadAttention
+    #
+    # MHA-specific quantizer scope (quantized path only):
+    #   - overflow_mode='SAT': Prevents attention scores from wrapping around
+    #     (WRAP mode would catastrophically corrupt softmax outputs).
+    #   - round_mode='RND': Standard rounding for attention computations.
+    #   - bc=MinMax(1, 8): Constrains attention bit-widths to [1, 8] bits,
+    #     preventing the optimizer from pruning attention heads to 0-bits
+    #     (which would reduce the Transformer to a trivial DeepSets model).
+    if quantize:
+        from hgq.config import QuantizerConfigScope
+        from hgq.constraints import MinMax
 
-    attn_out = attn_cls(
-        num_heads=num_heads,
-        key_dim=head_dim,
-        value_dim=head_dim,
-        output_shape=in_dim,
-        name=f"{block_name}_q_attention",
-    )(norm_x, norm_x, training=training)
+        mha_scope = QuantizerConfigScope(
+            k0=1, i0=1, f0=6,
+            round_mode="RND",
+            overflow_mode="SAT",
+            bc=MinMax(1, 8),
+        )
+        with mha_scope:
+            attn_out = QMultiHeadAttention(
+                num_heads=num_heads,
+                key_dim=head_dim,
+                value_dim=head_dim,
+                output_shape=in_dim,
+                name=f"{block_name}_q_attention",
+            )(norm_x, norm_x, training=training)
+    else:
+        attn_out = keras.layers.MultiHeadAttention(
+            num_heads=num_heads,
+            key_dim=head_dim,
+            value_dim=head_dim,
+            output_shape=in_dim,
+            name=f"{block_name}_q_attention",
+        )(norm_x, norm_x, training=training)
 
     # if quantize:
     #     # Establishes strict fractional geometry for the tiny attention update without scaling variance

@@ -1,4 +1,5 @@
 import os
+from contextlib import ExitStack
 import argparse
 import numpy as np
 import matplotlib.pyplot as plt
@@ -425,12 +426,31 @@ def train(
 
     optimizer = keras.optimizers.AdamW(learning_rate=1e-3)
 
-    quant_scope = QuantizerConfigScope(
-        place="all", default_q_type="kbi", overflow_mode="WRAP", br=MonoL1(1e-8)
-    )
-    layer_scope = LayerConfigScope(enable_ebops=True, beta0=1e-10)
+    # --- Quantizer & Layer Scopes ---
+    # Quantized path: separate kernel (weights) and datalane (activations) scopes
+    # matching the reference sub-microsecond transformers notebook.
+    # Unquantized path: original single scope preserved for non-HGQ training.
+    stack = ExitStack()
+    if quantize:
+        kernel_scope = QuantizerConfigScope(
+            k0=1, b0=8, i0=1, br=MonoL1(1e-8), overflow_mode="WRAP"
+        )
+        datalane_scope = QuantizerConfigScope(
+            place="datalane", k0=1, f0=6, fr=MonoL1(1e-8), ir=MonoL1(1e-8)
+        )
+        layer_scope = LayerConfigScope(enable_ebops=True, beta0=1e-10)
+        stack.enter_context(kernel_scope)
+        stack.enter_context(datalane_scope)
+        stack.enter_context(layer_scope)
+    else:
+        quant_scope = QuantizerConfigScope(
+            place="all", default_q_type="kbi", overflow_mode="WRAP", br=MonoL1(1e-8)
+        )
+        layer_scope = LayerConfigScope(enable_ebops=True, beta0=1e-10)
+        stack.enter_context(quant_scope)
+        stack.enter_context(layer_scope)
 
-    with quant_scope, layer_scope:
+    with stack:
         config = {
             "in_dim": num_feats,
             "embed_dim": embbed_dim,
