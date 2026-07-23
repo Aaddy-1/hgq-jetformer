@@ -75,7 +75,7 @@ def apply_hgq_transformer_block(
                     num_heads=num_heads,
                     key_dim=head_dim,
                     value_dim=head_dim,
-                    proj_dim_k=proj_dim_k,
+                    lin_kv_proj_dim=proj_dim_k,
                     output_shape=in_dim,
                     name=f"{block_name}_linformer_attn",
                 )(norm_x, norm_x, training=training)
