@@ -40,68 +40,53 @@ class PrependCLSToken(keras.layers.Layer):
 
 
 def build_hgq_jetformer(
-    in_dim=16,
-    embed_dim=128,
+    in_dim=3,
+    embed_dim=32,
     num_heads=2,
     num_classes=5,
-    num_transformers=4,
+    num_transformers=1,
+    proj_dim_k=2,
     dropout=0.0,
-    num_particles=30,
+    num_particles=16,
     activation="ReLU",
     normalization="Batch",
     quantize=True,
+    use_linformer=True,
+    use_cls_token=False,
 ):
     # 1. Explicit Input Definition
     inputs = keras.Input(shape=(num_particles, in_dim), name="input_particles")
 
-    # 2. Input Embedding
-    # Note: Preserving your original logic where the embedding is unquantized
-    # if you explicitly pass quantize=False, otherwise it follows the global flag.
+    # 2. Input Embedding Projection
     x = apply_hgq_embedding(
         inputs,
         in_dim=in_dim,
         embedding_dim=embed_dim,
-        quantize=quantize,  # Match your original HGQJetFormer hardcoded value, or change to `quantize`
+        quantize=quantize,
         prefix="embedding",
     )
 
-    # 3. Prepare and Prepend CLS token
-    # withClsFunctional
-    # ==========================================
-    # FUNCTIONAL CLS TOKEN INJECTION
-    # ==========================================
-    # 1. Isolate a single quantized spatial vector.
-    # The native Python slice is preserved by compile_hls.py
-    dummy_slice = x[:, 0:1, :]
+    # 3. Optional CLS Token Injection
+    if use_cls_token:
+        dummy_slice = x[:, 0:1, :]
+        zero_slice = dummy_slice * 0.0
+        raw_cls_tokens = keras.layers.Dense(
+            units=embed_dim,
+            use_bias=True,
+            kernel_initializer="zeros",
+            bias_initializer="random_normal",
+            trainable=True,
+            name="cls_token_weight",
+        )(zero_slice)
 
-    # 2. Zero out the spatial data to create a blank canvas.
-    zero_slice = dummy_slice * 0.0
+        if quantize:
+            quantized_cls_tokens = Quantizer(name="cls_quantizer")(raw_cls_tokens)
+        else:
+            quantized_cls_tokens = raw_cls_tokens
 
-    # 3. Inject the trainable token parameters using a standard primitive.
-    # Because x is already quantized from the embedding, this avoids the cmvm crash.
-    raw_cls_tokens = keras.layers.Dense(
-        units=embed_dim,
-        use_bias=True,
-        kernel_initializer="zeros",
-        bias_initializer="random_normal",
-        trainable=True,
-        name="cls_token_weight",
-    )(zero_slice)
-
-    # from hgq.layers import Quantizer
-
-    # 4. Explicitly bound the float32 bias output back into the integer domain
-    # before it enters the Transformer blocks.
-    if quantize:
-        quantized_cls_tokens = Quantizer(name="cls_quantizer")(raw_cls_tokens)
-    else:
-        quantized_cls_tokens = raw_cls_tokens
-
-    # 5. Route the purely quantized tensors into the sequence block.
-    x = keras.layers.Concatenate(axis=1, name="cls_token_injection")(
-        [quantized_cls_tokens, x]
-    )
-    # ==========================================
+        x = keras.layers.Concatenate(axis=1, name="cls_token_injection")(
+            [quantized_cls_tokens, x]
+        )
 
     # 4. Pass through Transformer Encoder blocks
     for i in range(num_transformers):
@@ -110,55 +95,43 @@ def build_hgq_jetformer(
             in_dim=embed_dim,
             latent_dim=embed_dim,
             num_heads=num_heads,
+            proj_dim_k=proj_dim_k,
             dropout=dropout,
             num_particles=num_particles,
             activation=activation,
             normalization=normalization,
             quantize=quantize,
+            use_linformer=use_linformer,
             block_name=f"transformer_block_{i}",
         )
 
-    # 5. Extract CLS token output (Index 0)
-    # Lambda layer ensures the slicing operation is named and traceable
-    # Native topological slicing.
-    # Keras automatically translates this into a static, serializable Slice op.
-    raw_slice = x[:, 0, :]
-
-    # Anchor the structural name for Alkaid's routing trace.
-    # The 'linear' activation is a mathematical identity (f(x) = x).
-    # TODO: Investigate this claim
-    # It incurs zero hardware cost and will be optimized out by Alkaid
-    # while preserving the "extract_cls" boundary marker in the netlist.
-    cls_out = keras.layers.Activation("linear", name="extract_cls")(raw_slice)
-
-    # 6. Final Normalization
-    if not quantize:
-        if normalization == "Batch":
-            cls_out = keras.layers.BatchNormalization(
-                axis=-1, name="final_norm", momentum=0.9, epsilon=1e-5
-            )(cls_out)
-        elif normalization == "Layer":
-            cls_out = keras.layers.LayerNormalization(axis=-1, name="final_norm")(cls_out)
-        else:
-            cls_out = keras.layers.BatchNormalization(
-                axis=-1, name="final_norm", momentum=0.9, epsilon=1e-5
-            )(cls_out)
+    # 5. Aggregation
+    if use_cls_token:
+        raw_slice = x[:, 0, :]
+        pooled = keras.layers.Activation("linear", name="extract_cls")(raw_slice)
     else:
-        # [ABLATION] QBatchNormalization removed from quantized path.
-        # cls_out = QBatchNormalization(
-        #     axis=-1, momentum=0.9, epsilon=1e-5, name="final_norm"
-        # )(cls_out)
-        pass
+        pooled = keras.layers.GlobalAveragePooling1D(name="linformer_pool")(x)
 
+    # 6. Dense Projection & Classifier Head
     from .initializers import get_parity_initializer
-    parity_initializer = get_parity_initializer()
 
+    parity_initializer = get_parity_initializer()
     dense_cls = QDense if quantize else keras.layers.Dense
+
+    embed_dense = dense_cls(
+        embed_dim,
+        kernel_initializer=parity_initializer,
+        name="embed_dense",
+    )(pooled)
+
+    if quantize:
+        embed_dense = Quantizer(name="embed_dense_quantizer")(embed_dense)
+
     logits = dense_cls(
         num_classes,
         kernel_initializer=parity_initializer,
         name="classifier_head",
-    )(cls_out)
+    )(embed_dense)
 
-    # 8. Compile Static Graph
+    # 7. Compile Static Graph
     return keras.Model(inputs=inputs, outputs=logits, name="HGQJetFormer")
