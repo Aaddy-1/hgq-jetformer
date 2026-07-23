@@ -376,14 +376,14 @@ def run_post_training_pipeline(
 
 
 def train(
-    num_particles: int = 150,
-    num_feats: int = 16,
+    num_particles: int = 16,
+    num_feats: int = 3,
     do_train: bool = True,
     val_ratio: float = 0.1,
-    num_epochs: int = 25,
-    early_stopping_patience: int = 0,
-    num_transformers: int = 3,
-    embbed_dim: int = 64,
+    num_epochs: int = 250,
+    early_stopping_patience: int = 150,
+    num_transformers: int = 1,
+    embbed_dim: int = 32,
     num_heads: int = 2,
     activation: str = "ReLU",
     normalization: str = "Batch",
@@ -482,6 +482,7 @@ def train(
             activation=activation,
             normalization=normalization,
             quantize=quantize,
+            use_linformer=True,
         )
 
         print("=================MODEL SUMMARY=================")
@@ -527,7 +528,7 @@ def train(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train HGQJetFormer")
     parser.add_argument(
-        "--num_particles", type=int, default=8, help="Number of jet constituents"
+        "--num_particles", type=int, default=16, help="Number of jet constituents"
     )
     parser.add_argument(
         "--num_feats",
@@ -537,7 +538,7 @@ if __name__ == "__main__":
         help="Number of features per constituent",
     )
     parser.add_argument(
-        "--num_epochs", type=int, default=25, help="Total training epochs"
+        "--num_epochs", type=int, default=250, help="Total training epochs"
     )
     parser.add_argument(
         "--batch_size", type=int, default=256, help="Training batch size"
@@ -548,7 +549,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--quantize",
         action=argparse.BooleanOptionalAction,
-        default=False,
+        default=True,
         help="Enable HGQ2 quantization",
     )
     args = parser.parse_args()
@@ -558,9 +559,9 @@ if __name__ == "__main__":
         num_feats=args.num_feats,
         num_epochs=args.num_epochs,
         batch_size=args.batch_size,
-        num_transformers=3,
-        embbed_dim=16,
-        early_stopping_patience=100,
+        num_transformers=1,
+        embbed_dim=32,
+        early_stopping_patience=150,
         val_ratio=0.1,
         experiment=args.experiment,
         quantize=args.quantize,
