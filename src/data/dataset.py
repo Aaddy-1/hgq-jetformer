@@ -12,7 +12,15 @@ class JetFormerDataGenerator(keras.utils.PyDataset):
     """
 
     def __init__(
-        self, h5_path, stats_dir, batch_size=256, shuffle=True, indices=None, **kwargs
+        self,
+        h5_path,
+        stats_dir,
+        batch_size=256,
+        shuffle=True,
+        indices=None,
+        x_key="jetConstituentList",
+        y_key="jets",
+        **kwargs,
     ):
         super().__init__(**kwargs)
         self.h5_path = h5_path
@@ -23,7 +31,15 @@ class JetFormerDataGenerator(keras.utils.PyDataset):
         self.std = np.load(os.path.join(stats_dir, "std.npy"))
 
         with h5py.File(self.h5_path, "r") as f:
-            total_length = f["jetConstituentList"].shape[0]
+            # Auto-detect HDF5 keys for cross-dataset compatibility
+            if x_key not in f:
+                x_key = "particle_features" if "particle_features" in f else list(f.keys())[0]
+            if y_key not in f:
+                y_key = "label" if "label" in f else list(f.keys())[1]
+
+            self.x_key = x_key
+            self.y_key = y_key
+            total_length = f[self.x_key].shape[0]
 
         # Parity Fix: Allow external subsetting
         if indices is not None:
@@ -55,8 +71,8 @@ class JetFormerDataGenerator(keras.utils.PyDataset):
         if self.shuffle:
             # h5py requires monotonically increasing indices for multi-index selection
             sorted_indices = np.sort(batch_indices)
-            x_batch = f["jetConstituentList"][sorted_indices]
-            y_batch = f["jets"][sorted_indices]
+            x_batch = f[self.x_key][sorted_indices]
+            y_batch = f[self.y_key][sorted_indices]
 
             # Revert to the randomized order
             restore_order = np.argsort(np.argsort(batch_indices))
@@ -64,14 +80,16 @@ class JetFormerDataGenerator(keras.utils.PyDataset):
             y_batch = y_batch[restore_order]
         else:
             # Contiguous slice (faster I/O)
-            x_batch = f["jetConstituentList"][start_idx:end_idx]
-            y_batch = f["jets"][start_idx:end_idx]
+            x_batch = f[self.x_key][start_idx:end_idx]
+            y_batch = f[self.y_key][start_idx:end_idx]
 
         # 1. Statistical Normalization (Z-score)
         x_batch = (x_batch - self.mean) / (self.std + 1e-8)
 
         # 2. Target Formulation (Convert one-hot to sparse categorical indices)
-        y_batch = np.argmax(y_batch, axis=-1)
+        # Handle both one-hot encoded labels (HLS4ML) and integer labels (JetClass)
+        if y_batch.ndim > 1 and y_batch.shape[-1] > 1:
+            y_batch = np.argmax(y_batch, axis=-1)
 
         return x_batch.astype(np.float32), y_batch.astype(np.int64)
 

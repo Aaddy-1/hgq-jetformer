@@ -37,8 +37,13 @@ OUTPUT_DIR = os.path.join(PROJECT_ROOT, "outputs")
 os.makedirs(MODEL_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# Define classes for the 150-particle dataset
-CLASSES = ["Gluon", "Light_quarks", "W_boson", "Z_boson", "Top_quark"]
+# Define classes for each supported dataset
+HLS4ML_CLASSES = ["Gluon", "Light_quarks", "W_boson", "Z_boson", "Top_quark"]
+
+JETCLASS_CLASSES = [
+    "g", "q", "W_qq", "Z_qq", "t_bqq",
+    "H_bb", "H_cc", "H_gg", "H_4q", "H_qq",
+]
 
 # Shared training constant: epoch after which EBOPs and val_loss
 # are expected to have stabilized under PID control.
@@ -104,8 +109,12 @@ def extract_model_metadata(model, best_ebops, best_epoch):
     }
 
 
-def setup_data_generators(num_particles, num_feats, batch_size, val_ratio=0.1):
-    base_path = os.path.join(PROCESSED_DIR, str(num_particles), f"{num_feats}f")
+def setup_data_generators(num_particles, num_feats, batch_size, val_ratio=0.1, dataset="hls4ml"):
+    if dataset == "jetclass":
+        base_path = os.path.join(PROCESSED_DIR, "jetclass", str(num_particles), f"{num_feats}f")
+    else:
+        base_path = os.path.join(PROCESSED_DIR, str(num_particles), f"{num_feats}f")
+
     train_h5_path = os.path.join(base_path, "train.h5")
     test_h5_path = os.path.join(base_path, "test.h5")
 
@@ -116,7 +125,14 @@ def setup_data_generators(num_particles, num_feats, batch_size, val_ratio=0.1):
     import h5py
 
     with h5py.File(train_h5_path, "r") as f:
-        total_train_samples = f["jetConstituentList"].shape[0]
+        # Auto-detect feature key for sample counting
+        if "jetConstituentList" in f:
+            x_key = "jetConstituentList"
+        elif "particle_features" in f:
+            x_key = "particle_features"
+        else:
+            x_key = list(f.keys())[0]
+        total_train_samples = f[x_key].shape[0]
 
     indices = np.random.permutation(total_train_samples)
     val_size = int(total_train_samples * val_ratio)
@@ -331,7 +347,10 @@ def run_post_training_pipeline(
     best_ebops: float,
     best_epoch: int,
     config: dict,
+    classes: list = None,
 ):
+    if classes is None:
+        classes = HLS4ML_CLASSES
     # Best weights are already restored by EarlyStoppingWithEbopsThres
     # (restore_best_weights=True) or keras.callbacks.EarlyStopping.
 
@@ -352,7 +371,7 @@ def run_post_training_pipeline(
     print("\nExecuting Final Inference on Test Set...")
     outputs = model.predict(test_gen)
     labels = np.concatenate([y for _, y in test_gen], axis=0)
-    test_acc, test_class_accs, test_aucs = evaluate(outputs, labels, CLASSES)
+    test_acc, test_class_accs, test_aucs = evaluate(outputs, labels, classes)
 
     if quantize:
         print(f"\n[Diagnostic] trace_minmax accuracy delta: {test_acc - pre_acc:+.4f}")
@@ -367,7 +386,7 @@ def run_post_training_pipeline(
                 test_acc,
                 test_class_accs,
                 test_aucs,
-                CLASSES,
+                classes,
                 metadata,
                 config,
                 eval_results_path,
@@ -395,12 +414,16 @@ def train(
     output_path: str = None,
     experiment: str = None,
     quantize: bool = True,
+    dataset: str = "hls4ml",
 ):
+    # Resolve class registry based on dataset
+    classes = JETCLASS_CLASSES if dataset == "jetclass" else HLS4ML_CLASSES
     train_gen, val_gen, test_gen = setup_data_generators(
         num_particles=num_particles,
         num_feats=num_feats,
         batch_size=batch_size,
         val_ratio=val_ratio,
+        dataset=dataset,
     )
 
     current_model_dir, current_output_dir = resolve_experiment_paths(
@@ -455,7 +478,7 @@ def train(
             "in_dim": num_feats,
             "embed_dim": embbed_dim,
             "num_heads": num_heads,
-            "num_classes": len(CLASSES),
+            "num_classes": len(classes),
             "num_transformers": num_transformers,
             "dropout": dropout,
             "num_particles": num_particles,
@@ -475,7 +498,7 @@ def train(
             in_dim=num_feats,
             embed_dim=embbed_dim,
             num_heads=num_heads,
-            num_classes=len(CLASSES),
+            num_classes=len(classes),
             num_transformers=num_transformers,
             dropout=dropout,
             num_particles=num_particles,
@@ -522,19 +545,26 @@ def train(
             ebops_capture.best_ebops,
             ebops_capture.best_epoch,
             config,
+            classes=classes,
         )
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train HGQJetFormer")
     parser.add_argument(
-        "--num_particles", type=int, default=16, help="Number of jet constituents"
+        "--dataset",
+        type=str,
+        default="hls4ml",
+        choices=["hls4ml", "jetclass"],
+        help="Target dataset: hls4ml (default) or jetclass",
+    )
+    parser.add_argument(
+        "--num_particles", type=int, default=None, help="Number of jet constituents"
     )
     parser.add_argument(
         "--num_feats",
         type=int,
-        default=3,
-        choices=[3, 16],
+        default=None,
         help="Number of features per constituent",
     )
     parser.add_argument(
@@ -542,6 +572,9 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--batch_size", type=int, default=256, help="Training batch size"
+    )
+    parser.add_argument(
+        "--dropout", type=float, default=0.0, help="Dropout rate"
     )
     parser.add_argument(
         "--experiment", type=str, default=None, help="Name of the experiment folder"
@@ -554,15 +587,25 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
+    # Resolve dataset-specific defaults
+    if args.dataset == "jetclass":
+        num_particles = args.num_particles if args.num_particles is not None else 128
+        num_feats = args.num_feats if args.num_feats is not None else 14
+    else:
+        num_particles = args.num_particles if args.num_particles is not None else 16
+        num_feats = args.num_feats if args.num_feats is not None else 3
+
     train(
-        num_particles=args.num_particles,
-        num_feats=args.num_feats,
+        num_particles=num_particles,
+        num_feats=num_feats,
         num_epochs=args.num_epochs,
         batch_size=args.batch_size,
         num_transformers=1,
         embbed_dim=32,
         early_stopping_patience=150,
+        dropout=args.dropout,
         val_ratio=0.1,
         experiment=args.experiment,
         quantize=args.quantize,
+        dataset=args.dataset,
     )
