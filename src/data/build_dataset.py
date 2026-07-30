@@ -233,14 +233,17 @@ def customize_dataset(num_particles, feats: list = [5, 8, 11], name="train"):
             print(f"Saved customized result to {output_path}")
 
 
-def compute_and_save_welford_stats(num_particles, num_feats, batch_size=5000):
+def compute_and_save_welford_stats(
+    num_particles, num_feats, batch_size=5000, train_path=None, x_key="jetConstituentList"
+):
     """
     Computes and serializes the global mean and standard deviation of the dataset
     using Welford's online algorithm to prevent memory overflow and catastrophic cancellation.
     """
-    train_path = os.path.join(
-        PROCESSED_DIR, str(num_particles), f"{num_feats}f", "train.h5"
-    )
+    if train_path is None:
+        train_path = os.path.join(
+            PROCESSED_DIR, str(num_particles), f"{num_feats}f", "train.h5"
+        )
     save_dir = os.path.dirname(train_path)
 
     print(f"Computing Welford statistics for {train_path}...")
@@ -251,7 +254,10 @@ def compute_and_save_welford_stats(num_particles, num_feats, batch_size=5000):
     M2 = None
 
     with h5py.File(train_path, "r") as fin:
-        X = fin["jetConstituentList"]
+        # Auto-detect feature key for cross-dataset compatibility
+        if x_key not in fin:
+            x_key = "particle_features" if "particle_features" in fin else list(fin.keys())[0]
+        X = fin[x_key]
         n_samples = X.shape[0]
 
         for start in tqdm(range(0, n_samples, batch_size), desc="Welford Stats"):
@@ -294,26 +300,187 @@ def compute_and_save_welford_stats(num_particles, num_feats, batch_size=5000):
     print(f"Saved mean.npy and std.npy to {save_dir}")
     print("Time taken:", time.time() - start_time, "s")
 
+
+def process_jetclass_dataset(num_particles=128, num_feats=14, batch_size=5000):
+    """
+    Processes raw JetClass ROOT files into standardized HDF5 format
+    under data/processed/jetclass/{num_particles}/{num_feats}f/.
+
+    JetClass raw data is expected to be pre-converted to HDF5 format
+    and placed under data/jetclass/train/ and data/jetclass/test/.
+
+    Each raw HDF5 file should contain:
+        - 'particle_features': shape (N, max_particles, num_features)
+        - 'label': shape (N,) integer class indices or (N, 10) one-hot
+
+    This function:
+        1. Merges per-shard HDF5 files into single train.h5 and test.h5
+        2. Crops/pads to (num_particles, num_feats)
+        3. Computes Welford normalization statistics (mean.npy, std.npy)
+    """
+    jetclass_raw_dir = os.path.join(DATA_DIR, "jetclass")
+    output_dir = os.path.join(PROCESSED_DIR, "jetclass", str(num_particles), f"{num_feats}f")
+    os.makedirs(output_dir, exist_ok=True)
+
+    for split in ["train", "test"]:
+        split_dir = os.path.join(jetclass_raw_dir, split)
+        output_path = os.path.join(output_dir, f"{split}.h5")
+
+        if not os.path.isdir(split_dir):
+            raise FileNotFoundError(
+                f"JetClass raw data not found at {split_dir}. "
+                f"Please place pre-converted HDF5 shards under {split_dir}/."
+            )
+
+        file_list = sorted([f for f in os.listdir(split_dir) if f.endswith(".h5")])
+        if not file_list:
+            raise FileNotFoundError(
+                f"No .h5 files found in {split_dir}. "
+                f"Please convert JetClass ROOT files to HDF5 first."
+            )
+
+        # Pass 1: Count total samples and detect shapes
+        total_samples = 0
+        x_key = None
+        y_key = None
+        for fname in file_list:
+            with h5py.File(os.path.join(split_dir, fname), "r") as f:
+                # Auto-detect feature and label keys
+                if x_key is None:
+                    x_key = "particle_features" if "particle_features" in f else "jetConstituentList"
+                    y_key = "label" if "label" in f else "jets"
+                total_samples += f[x_key].shape[0]
+
+        print(f"[JetClass/{split}] Found {total_samples} jets across {len(file_list)} shards")
+        print(f"[JetClass/{split}] Feature key: '{x_key}', Label key: '{y_key}'")
+
+        # Pass 2: Merge, crop, and write to output
+        with h5py.File(output_path, "w") as fout:
+            dset_X = fout.create_dataset(
+                x_key,
+                shape=(total_samples, num_particles, num_feats),
+                dtype=np.float32,
+                compression="lzf",
+                chunks=True,
+            )
+
+            # Detect label dimensionality from first shard
+            with h5py.File(os.path.join(split_dir, file_list[0]), "r") as f_probe:
+                label_shape = f_probe[y_key].shape
+                if len(label_shape) == 1 or label_shape[-1] == 1:
+                    # Integer labels
+                    dset_y = fout.create_dataset(
+                        y_key,
+                        shape=(total_samples,),
+                        dtype=np.int64,
+                        compression="lzf",
+                        chunks=True,
+                    )
+                else:
+                    # One-hot labels
+                    dset_y = fout.create_dataset(
+                        y_key,
+                        shape=(total_samples, label_shape[-1]),
+                        dtype=np.float32,
+                        compression="lzf",
+                        chunks=True,
+                    )
+
+            write_idx = 0
+            with tqdm(file_list, desc=f"Merging JetClass/{split}") as t:
+                for fname in t:
+                    t.set_postfix(file=fname)
+                    with h5py.File(os.path.join(split_dir, fname), "r") as f:
+                        X_raw = f[x_key][...]
+                        y_raw = f[y_key][...]
+
+                        n_jets = X_raw.shape[0]
+
+                        # Crop particles and features to target dimensions
+                        n_raw_particles = X_raw.shape[1] if X_raw.ndim >= 2 else 0
+                        n_raw_feats = X_raw.shape[2] if X_raw.ndim >= 3 else 0
+
+                        # Crop or zero-pad particles dimension
+                        if n_raw_particles >= num_particles:
+                            X_cropped = X_raw[:, :num_particles, :]
+                        else:
+                            pad_width = ((0, 0), (0, num_particles - n_raw_particles), (0, 0))
+                            X_cropped = np.pad(X_raw, pad_width, mode="constant")
+
+                        # Crop or zero-pad features dimension
+                        if n_raw_feats >= num_feats:
+                            X_cropped = X_cropped[:, :, :num_feats]
+                        else:
+                            pad_width = ((0, 0), (0, 0), (0, num_feats - n_raw_feats))
+                            X_cropped = np.pad(X_cropped, pad_width, mode="constant")
+
+                        for start in range(0, n_jets, batch_size):
+                            end = min(start + batch_size, n_jets)
+                            batch_len = end - start
+                            dset_X[write_idx : write_idx + batch_len] = X_cropped[start:end]
+                            dset_y[write_idx : write_idx + batch_len] = y_raw[start:end]
+                            write_idx += batch_len
+
+            print(f"[JetClass/{split}] Saved processed dataset to {output_path}")
+            print(f"[JetClass/{split}] Final shape: X={dset_X.shape}, y={dset_y.shape}")
+
+    # Compute Welford statistics on training split only (prevent data leakage)
+    train_path = os.path.join(output_dir, "train.h5")
+    compute_and_save_welford_stats(
+        num_particles=num_particles,
+        num_feats=num_feats,
+        train_path=train_path,
+        x_key=x_key,
+    )
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Build HDF5 Dataset for JetFormer")
-    parser.add_argument("--num_particles", type=int, default=8, help="Number of jet constituents to retain")
-    parser.add_argument("--num_feats", type=int, default=3, choices=[3, 16], help="Number of features per constituent")
-    
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        default="hls4ml",
+        choices=["hls4ml", "jetclass"],
+        help="Target dataset: hls4ml (default) or jetclass",
+    )
+    parser.add_argument(
+        "--num_particles",
+        type=int,
+        default=8,
+        help="Number of jet constituents to retain",
+    )
+    parser.add_argument(
+        "--num_feats",
+        type=int,
+        default=3,
+        choices=[3, 14, 16],
+        help="Number of features per constituent",
+    )
+
     args = parser.parse_args()
 
-    # Map the feature count to the specific kinematic indices
-    if args.num_feats == 3:
-        target_feats = [5, 8, 11]
+    if args.dataset == "jetclass":
+        # JetClass pipeline: 128 particles, 14 features, 10 classes
+        num_particles = args.num_particles if args.num_particles != 8 else 128
+        num_feats = args.num_feats if args.num_feats != 3 else 14
+        print(f"[JetClass] Building dataset with {num_particles} particles, {num_feats} features")
+        process_jetclass_dataset(num_particles=num_particles, num_feats=num_feats)
     else:
-        target_feats = list(range(16))
+        # HLS4ML pipeline (original behavior preserved)
+        if args.num_feats == 3:
+            target_feats = [5, 8, 11]
+        elif args.num_feats == 14:
+            raise ValueError("14 features is only valid for --dataset jetclass")
+        else:
+            target_feats = list(range(16))
 
-    target_particles = args.num_particles
+        target_particles = args.num_particles
 
-    # 1. Structural Preprocessing
-    customize_dataset(num_particles=target_particles, feats=target_feats, name="train")
-    customize_dataset(num_particles=target_particles, feats=target_feats, name="test")
+        # 1. Structural Preprocessing
+        customize_dataset(num_particles=target_particles, feats=target_feats, name="train")
+        customize_dataset(num_particles=target_particles, feats=target_feats, name="test")
 
-    # 2. Statistical Preprocessing (Executing solely on the training split to prevent data leakage)
-    compute_and_save_welford_stats(
-        num_particles=target_particles, num_feats=len(target_feats)
-    )
+        # 2. Statistical Preprocessing (Executing solely on the training split to prevent data leakage)
+        compute_and_save_welford_stats(
+            num_particles=target_particles, num_feats=len(target_feats)
+        )
