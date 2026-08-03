@@ -24,7 +24,11 @@ class JetFormerDataGenerator(keras.utils.PyDataset):
         **kwargs,
     ):
         super().__init__(**kwargs)
-        self.h5_path = h5_path
+        if isinstance(h5_path, (list, tuple)):
+            self.h5_paths = list(h5_path)
+        else:
+            self.h5_paths = [h5_path]
+
         self.batch_size = batch_size
         self.shuffle = shuffle
         self.num_feats = num_feats
@@ -36,8 +40,9 @@ class JetFormerDataGenerator(keras.utils.PyDataset):
             self.mean = self.mean[: self.num_feats]
             self.std = self.std[: self.num_feats]
 
-        with h5py.File(self.h5_path, "r") as f:
-            # Auto-detect HDF5 keys for cross-dataset compatibility
+        # Inspect first file to detect keys and count total lengths across files
+        self.file_lengths = []
+        with h5py.File(self.h5_paths[0], "r") as f:
             if x_key not in f:
                 x_key = "particle_features" if "particle_features" in f else list(f.keys())[0]
             if y_key not in f:
@@ -45,7 +50,15 @@ class JetFormerDataGenerator(keras.utils.PyDataset):
 
             self.x_key = x_key
             self.y_key = y_key
-            total_length = f[self.x_key].shape[0]
+
+        total_length = 0
+        for p in self.h5_paths:
+            with h5py.File(p, "r") as f:
+                l = f[self.x_key].shape[0]
+                self.file_lengths.append(l)
+                total_length += l
+
+        self.cum_lengths = np.cumsum([0] + self.file_lengths)
 
         # Parity Fix: Allow external subsetting
         if indices is not None:
@@ -55,39 +68,72 @@ class JetFormerDataGenerator(keras.utils.PyDataset):
             self.indices = np.arange(total_length)
             self.length = total_length
 
-        self._h5_file = None
+        self._h5_files = {}
         self.on_epoch_end()
 
-    def _get_file(self):
+    def _get_file(self, file_idx):
         # Thread-safe lazy initialization for Keras multiprocessing
-        if self._h5_file is None:
-            self._h5_file = h5py.File(self.h5_path, "r")
-        return self._h5_file
+        if file_idx not in self._h5_files or self._h5_files[file_idx] is None:
+            self._h5_files[file_idx] = h5py.File(self.h5_paths[file_idx], "r")
+        return self._h5_files[file_idx]
 
     def __len__(self):
         return int(np.ceil(self.length / self.batch_size))
 
     def __getitem__(self, idx):
-        f = self._get_file()
-
         start_idx = idx * self.batch_size
         end_idx = min((idx + 1) * self.batch_size, self.length)
         batch_indices = self.indices[start_idx:end_idx]
 
-        if self.shuffle:
-            # h5py requires monotonically increasing indices for multi-index selection
-            sorted_indices = np.sort(batch_indices)
-            x_batch = f[self.x_key][sorted_indices]
-            y_batch = f[self.y_key][sorted_indices]
+        # Group batch indices by file index
+        x_chunks = []
+        y_chunks = []
+        chunk_orders = []
 
-            # Revert to the randomized order
-            restore_order = np.argsort(np.argsort(batch_indices))
-            x_batch = x_batch[restore_order]
-            y_batch = y_batch[restore_order]
+        for f_idx in range(len(self.h5_paths)):
+            f_start = self.cum_lengths[f_idx]
+            f_end = self.cum_lengths[f_idx + 1]
+
+            # Mask for indices falling into this file
+            mask = (batch_indices >= f_start) & (batch_indices < f_end)
+            if not np.any(mask):
+                continue
+
+            sub_indices = batch_indices[mask] - f_start
+            sub_positions = np.where(mask)[0]
+
+            f = self._get_file(f_idx)
+
+            if self.shuffle:
+                sorted_sub = np.sort(sub_indices)
+                x_sub = f[self.x_key][sorted_sub]
+                y_sub = f[self.y_key][sorted_sub]
+                restore = np.argsort(np.argsort(sub_indices))
+                x_sub = x_sub[restore]
+                y_sub = y_sub[restore]
+            else:
+                x_sub = f[self.x_key][sub_indices]
+                y_sub = f[self.y_key][sub_indices]
+
+            x_chunks.append(x_sub)
+            y_chunks.append(y_sub)
+            chunk_orders.append(sub_positions)
+
+        # Combine chunks back into original batch order
+        if len(x_chunks) == 1:
+            x_batch = x_chunks[0]
+            y_batch = y_chunks[0]
         else:
-            # Contiguous slice (faster I/O)
-            x_batch = f[self.x_key][start_idx:end_idx]
-            y_batch = f[self.y_key][start_idx:end_idx]
+            total_b = len(batch_indices)
+            sample_x_shape = x_chunks[0].shape[1:]
+            sample_y_shape = y_chunks[0].shape[1:]
+
+            x_batch = np.empty((total_b, *sample_x_shape), dtype=x_chunks[0].dtype)
+            y_batch = np.empty((total_b, *sample_y_shape), dtype=y_chunks[0].dtype)
+
+            for x_sub, y_sub, pos in zip(x_chunks, y_chunks, chunk_orders):
+                x_batch[pos] = x_sub
+                y_batch[pos] = y_sub
 
         # On-the-fly feature slicing for feature ablation experiments
         if self.num_feats is not None and self.num_feats < x_batch.shape[-1]:
@@ -97,7 +143,6 @@ class JetFormerDataGenerator(keras.utils.PyDataset):
         x_batch = (x_batch - self.mean) / (self.std + 1e-8)
 
         # 2. Target Formulation (Convert one-hot to sparse categorical indices)
-        # Handle both one-hot encoded labels (HLS4ML) and integer labels (JetClass)
         if y_batch.ndim > 1 and y_batch.shape[-1] > 1:
             y_batch = np.argmax(y_batch, axis=-1)
 
@@ -109,8 +154,10 @@ class JetFormerDataGenerator(keras.utils.PyDataset):
             np.random.shuffle(self.indices)
 
     def __del__(self):
-        if self._h5_file is not None:
-            try:
-                self._h5_file.close()
-            except Exception:
-                pass
+        if hasattr(self, "_h5_files"):
+            for f in self._h5_files.values():
+                if f is not None:
+                    try:
+                        f.close()
+                    except Exception:
+                        pass

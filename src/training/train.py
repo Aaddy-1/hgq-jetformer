@@ -109,37 +109,55 @@ def extract_model_metadata(model, best_ebops, best_epoch):
     }
 
 
-def setup_data_generators(num_particles, num_feats, batch_size, val_ratio=0.1, dataset="hls4ml"):
+def setup_data_generators(
+    num_particles,
+    num_feats,
+    batch_size,
+    val_ratio=0.1,
+    dataset="hls4ml",
+    train_parts=None,
+):
     if dataset == "jetclass":
-        # Check if full 17-feature preprocessed dataset exists first (for feature slicing)
-        full_17f_path = os.path.join(PROCESSED_DIR, "jetclass", str(num_particles), "17f")
-        specific_f_path = os.path.join(PROCESSED_DIR, "jetclass", str(num_particles), f"{num_feats}f")
+        base_path = os.path.join(PROCESSED_DIR, "jetclass", str(num_particles), f"{num_feats}f")
+        if not os.path.exists(base_path):
+            base_path = os.path.join(PROCESSED_DIR, "jetclass", str(num_particles), "17f")
 
-        if os.path.exists(os.path.join(full_17f_path, "train.h5")):
-            base_path = full_17f_path
+        # Find train_part*.h5 files or fallback to train.h5
+        if train_parts is not None:
+            train_h5_paths = [
+                os.path.join(base_path, f"train_part{p}.h5") for p in train_parts
+            ]
         else:
-            base_path = specific_f_path
+            # Detect all available train_part*.h5 files in base_path
+            import glob
+
+            part_files = sorted(glob.glob(os.path.join(base_path, "train_part*.h5")))
+            if part_files:
+                train_h5_paths = part_files
+            else:
+                train_h5_paths = [os.path.join(base_path, "train.h5")]
     else:
         base_path = os.path.join(PROCESSED_DIR, str(num_particles), f"{num_feats}f")
+        train_h5_paths = [os.path.join(base_path, "train.h5")]
 
-    train_h5_path = os.path.join(base_path, "train.h5")
     test_h5_path = os.path.join(base_path, "test.h5")
 
     print("BASE PATH:", base_path)
     print("================================")
-    print("TRAIN H5 PATH:", train_h5_path)
+    print("TRAIN H5 PATHS:", train_h5_paths)
 
     import h5py
 
-    with h5py.File(train_h5_path, "r") as f:
-        # Auto-detect feature key for sample counting
-        if "jetConstituentList" in f:
-            x_key = "jetConstituentList"
-        elif "particle_features" in f:
-            x_key = "particle_features"
-        else:
-            x_key = list(f.keys())[0]
-        total_train_samples = f[x_key].shape[0]
+    total_train_samples = 0
+    for p in train_h5_paths:
+        with h5py.File(p, "r") as f:
+            if "jetConstituentList" in f:
+                x_key = "jetConstituentList"
+            elif "particle_features" in f:
+                x_key = "particle_features"
+            else:
+                x_key = list(f.keys())[0]
+            total_train_samples += f[x_key].shape[0]
 
     indices = np.random.permutation(total_train_samples)
     val_size = int(total_train_samples * val_ratio)
@@ -147,7 +165,7 @@ def setup_data_generators(num_particles, num_feats, batch_size, val_ratio=0.1, d
     train_indices = indices[val_size:]
 
     train_gen = JetFormerDataGenerator(
-        h5_path=train_h5_path,
+        h5_path=train_h5_paths,
         stats_dir=base_path,
         batch_size=batch_size,
         shuffle=True,
@@ -155,7 +173,7 @@ def setup_data_generators(num_particles, num_feats, batch_size, val_ratio=0.1, d
         num_feats=num_feats,
     )
     val_gen = JetFormerDataGenerator(
-        h5_path=train_h5_path,
+        h5_path=train_h5_paths,
         stats_dir=base_path,
         batch_size=batch_size,
         shuffle=False,
@@ -428,6 +446,7 @@ def train(
     experiment: str = None,
     quantize: bool = True,
     dataset: str = "hls4ml",
+    train_parts: list = None,
 ):
     # Resolve class registry based on dataset
     classes = JETCLASS_CLASSES if dataset == "jetclass" else HLS4ML_CLASSES
@@ -437,6 +456,7 @@ def train(
         batch_size=batch_size,
         val_ratio=val_ratio,
         dataset=dataset,
+        train_parts=train_parts,
     )
 
     current_model_dir, current_output_dir = resolve_experiment_paths(
@@ -590,6 +610,13 @@ if __name__ == "__main__":
         "--dropout", type=float, default=0.0, help="Dropout rate"
     )
     parser.add_argument(
+        "--train_parts",
+        type=int,
+        nargs="+",
+        default=None,
+        help="Specific training part indices to train on (e.g. --train_parts 0 or --train_parts 0 1 2)",
+    )
+    parser.add_argument(
         "--experiment", type=str, default=None, help="Name of the experiment folder"
     )
     parser.add_argument(
@@ -621,4 +648,5 @@ if __name__ == "__main__":
         experiment=args.experiment,
         quantize=args.quantize,
         dataset=args.dataset,
+        train_parts=args.train_parts,
     )
