@@ -130,7 +130,7 @@ datasets = {
 }
 
 
-def download_dataset(dataset, basedir, envfile, force_download):
+def download_dataset(dataset, basedir, force_download):
     info = datasets[dataset]
     datadir = os.path.join(basedir, dataset)
     if force_download:
@@ -138,26 +138,19 @@ def download_dataset(dataset, basedir, envfile, force_download):
             print(f"Removing existing dir {datadir}")
             shutil.rmtree(datadir)
     for subdir, flist in info.items():
+        target_extract_path = os.path.join(datadir, subdir)
         for url, md5 in flist:
-            fpath, download = download_file(
+            fpath, _ = download_file(
                 url, datadir=datadir, file_hash=md5, force_download=force_download
             )
-            if download:
-                extract_archive(fpath, path=os.path.join(datadir, subdir))
-                # Delete compressed archive after extraction to free disk space
-                if os.path.exists(fpath):
+            # If tar archive exists (downloaded now or previously), extract and delete it
+            if os.path.exists(fpath):
+                extract_archive(fpath, path=target_extract_path)
+                try:
                     os.remove(fpath)
                     print(f"[Cleaned] Removed archive {os.path.basename(fpath)}")
-
-    datapath = f"DATADIR_{dataset}={datadir}"
-    with open(envfile) as f:
-        lines = f.readlines()
-    with open(envfile, "w") as f:
-        for l in lines:
-            if f"DATADIR_{dataset}" in l:
-                l = f"export {datapath}\n"
-            f.write(l)
-    print(f'Updated dataset path in {envfile} to "{datapath}".')
+                except Exception as e:
+                    print(f"Warning: Could not remove {fpath}: {e}")
 
 
 if __name__ == "__main__":
@@ -167,11 +160,8 @@ if __name__ == "__main__":
         "-d", "--basedir", default="datasets", help="base directory for the datasets"
     )
     parser.add_argument(
-        "-e", "--envfile", default="env.sh", help="env file with the dataset paths"
-    )
-    parser.add_argument(
         "-f", "--force", action="store_true", help="force to re-download dataset"
     )
     args = parser.parse_args()
 
-    download_dataset(args.dataset, args.basedir, args.envfile, args.force)
+    download_dataset(args.dataset, args.basedir, args.force)
