@@ -233,16 +233,17 @@ def process_jetclass_root_dir(input_dir, num_particles=128, num_feats=17, batch_
         if "test" in fname.lower() or "val" in fname.lower() or "test" in parent_dir.lower() or "val" in parent_dir.lower():
             test_files.append(rfile)
         else:
-            # Detect part number from path or directory name (e.g. part0, part1...)
+            # Detect part number from full path or filename index (e.g., TTBar_025.root -> file_num 25 -> part 2)
             part_id = "0"
-            for token in [fname, parent_dir]:
-                if "part" in token.lower():
-                    # Extract part number
-                    import re
-                    match = re.search(r"part(\d+)", token, re.IGNORECASE)
-                    if match:
-                        part_id = match.group(1)
-                        break
+            import re
+            match = re.search(r"part(\d+)", rfile, re.IGNORECASE)
+            if match:
+                part_id = match.group(1)
+            else:
+                idx_match = re.search(r"_(\d{3,4})\.root$", fname)
+                if idx_match:
+                    file_num = int(idx_match.group(1))
+                    part_id = str(file_num // 10)
 
             if part_id not in train_parts:
                 train_parts[part_id] = []
