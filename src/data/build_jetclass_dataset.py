@@ -128,42 +128,53 @@ def build_features_and_labels(tree, max_particles=128):
     return pf_features.astype(np.float32), labels.astype(np.int64)
 
 
-def compute_welford_stats(train_h5_path, save_dir, num_feats=17, batch_size=5000):
+def compute_welford_stats(train_h5_paths, save_dir, num_feats=17, batch_size=5000):
     """
-    Computes global mean and std for the 17 features using Welford's algorithm.
+    Computes global mean and std for the 17 features using Welford's algorithm
+    across all training part HDF5 files.
     """
-    print(f"\n[Welford] Computing feature statistics for {train_h5_path}...")
+    if isinstance(train_h5_paths, str):
+        train_h5_paths = [train_h5_paths]
+
+    print(f"\n[Welford] Computing feature statistics across {len(train_h5_paths)} training shard(s)...")
     start_time = time.time()
 
     n = 0
     mean = None
     M2 = None
 
-    with h5py.File(train_h5_path, "r") as fin:
-        X = fin["particle_features"]
-        n_samples = X.shape[0]
+    for train_path in train_h5_paths:
+        if not os.path.exists(train_path):
+            continue
 
-        for start in tqdm(range(0, n_samples, batch_size), desc="Computing Welford Stats"):
-            end = min(start + batch_size, n_samples)
-            batch_X_flat = X[start:end].reshape(-1, num_feats)
-            batch_n = batch_X_flat.shape[0]
+        with h5py.File(train_path, "r") as fin:
+            X = fin["particle_features"]
+            n_samples = X.shape[0]
 
-            if batch_n == 0:
-                continue
+            for start in tqdm(range(0, n_samples, batch_size), desc=f"Welford Stats ({os.path.basename(train_path)})"):
+                end = min(start + batch_size, n_samples)
+                batch_X_flat = X[start:end].reshape(-1, num_feats)
+                batch_n = batch_X_flat.shape[0]
 
-            batch_mean = np.mean(batch_X_flat, axis=0)
-            batch_M2 = np.sum((batch_X_flat - batch_mean) ** 2, axis=0)
+                if batch_n == 0:
+                    continue
 
-            if mean is None:
-                mean = batch_mean
-                M2 = batch_M2
-                n = batch_n
-            else:
-                delta = batch_mean - mean
-                total_n = n + batch_n
-                mean = mean + delta * (batch_n / total_n)
-                M2 = M2 + batch_M2 + (delta**2) * n * batch_n / total_n
-                n = total_n
+                batch_mean = np.mean(batch_X_flat, axis=0)
+                batch_M2 = np.sum((batch_X_flat - batch_mean) ** 2, axis=0)
+
+                if mean is None:
+                    mean = batch_mean
+                    M2 = batch_M2
+                    n = batch_n
+                else:
+                    delta = batch_mean - mean
+                    total_n = n + batch_n
+                    mean = mean + delta * (batch_n / total_n)
+                    M2 = M2 + batch_M2 + (delta**2) * n * batch_n / total_n
+                    n = total_n
+
+    if mean is None:
+        raise ValueError("No valid training samples found to compute Welford statistics.")
 
     std = np.sqrt(M2 / (n - 1 + 1e-8))
 
@@ -176,13 +187,15 @@ def compute_welford_stats(train_h5_path, save_dir, num_feats=17, batch_size=5000
     print(f"[Welford] Saved mean.npy and std.npy to {save_dir}")
     print(f"[Welford] Mean: {mean}")
     print(f"[Welford] Std:  {std}")
+    print(f"[Welford] Total samples analyzed: {n // 128}")
     print(f"[Welford] Time taken: {time.time() - start_time:.2f}s")
 
 
 def process_jetclass_root_dir(input_dir, num_particles=128, num_feats=17, batch_size=5000):
     """
-    Scans input directory for JetClass ROOT files, converts ROOT files
-    to standardized HDF5 files (train.h5 & test.h5), and computes Welford statistics.
+    Scans input directory for JetClass ROOT files, groups training files into
+    per-part shards (train_part0.h5, train_part1.h5, ...), converts ROOT files
+    to standardized HDF5 shards, and computes global Welford statistics.
     """
     if uproot is None or ak is None:
         raise ImportError(
@@ -209,21 +222,47 @@ def process_jetclass_root_dir(input_dir, num_particles=128, num_feats=17, batch_
 
     print(f"[JetClass] Found {len(all_root_files)} ROOT files in {input_dir}")
 
-    # Split files into train (80%) and test (20%)
-    n_files = len(all_root_files)
-    n_test = max(1, int(n_files * 0.2))
-    n_train = n_files - n_test
+    # Separate into test/val vs train, and group training files by part (e.g. part0, part1...)
+    train_parts = {}
+    test_files = []
 
-    file_splits = {
-        "train": all_root_files[:n_train],
-        "test": all_root_files[n_train:],
-    }
+    for rfile in all_root_files:
+        fname = os.path.basename(rfile)
+        parent_dir = os.path.basename(os.path.dirname(rfile))
 
-    for split, root_files in file_splits.items():
-        output_h5_path = os.path.join(output_dir, f"{split}.h5")
-        print(f"\n[JetClass/{split}] Processing {len(root_files)} ROOT files -> {output_h5_path}")
+        if "test" in fname.lower() or "val" in fname.lower() or "test" in parent_dir.lower() or "val" in parent_dir.lower():
+            test_files.append(rfile)
+        else:
+            # Detect part number from path or directory name (e.g. part0, part1...)
+            part_id = "0"
+            for token in [fname, parent_dir]:
+                if "part" in token.lower():
+                    # Extract part number
+                    import re
+                    match = re.search(r"part(\d+)", token, re.IGNORECASE)
+                    if match:
+                        part_id = match.group(1)
+                        break
 
-        # Pass 1: Count total samples across all trees in split
+            if part_id not in train_parts:
+                train_parts[part_id] = []
+            train_parts[part_id].append(rfile)
+
+    # If no test files identified explicitly, reserve 20% of files for test
+    if not test_files and all_root_files:
+        n_files = len(all_root_files)
+        n_test = max(1, int(n_files * 0.2))
+        test_files = all_root_files[-n_test:]
+
+    # 1. Process Training Part Shards
+    generated_train_h5_paths = []
+    for part_id in sorted(train_parts.keys(), key=lambda x: int(x) if x.isdigit() else x):
+        root_files = train_parts[part_id]
+        output_h5_path = os.path.join(output_dir, f"train_part{part_id}.h5")
+        generated_train_h5_paths.append(output_h5_path)
+
+        print(f"\n[JetClass/train_part{part_id}] Processing {len(root_files)} ROOT files -> {output_h5_path}")
+
         total_samples = 0
         for rfile in root_files:
             try:
@@ -232,9 +271,8 @@ def process_jetclass_root_dir(input_dir, num_particles=128, num_feats=17, batch_
             except Exception as e:
                 print(f"Warning: Could not read {rfile}: {e}")
 
-        print(f"[JetClass/{split}] Total events: {total_samples}")
+        print(f"[JetClass/train_part{part_id}] Total events: {total_samples}")
 
-        # Pass 2: Process and write to HDF5
         with h5py.File(output_h5_path, "w") as fout:
             dset_X = fout.create_dataset(
                 "particle_features",
@@ -252,7 +290,7 @@ def process_jetclass_root_dir(input_dir, num_particles=128, num_feats=17, batch_
             )
 
             write_idx = 0
-            for rfile in tqdm(root_files, desc=f"Converting {split} ROOT files"):
+            for rfile in tqdm(root_files, desc=f"Converting part{part_id} ROOT files"):
                 try:
                     tree = uproot.open(rfile)["tree"]
                     X_arr, y_arr = build_features_and_labels(tree, max_particles=num_particles)
@@ -264,11 +302,53 @@ def process_jetclass_root_dir(input_dir, num_particles=128, num_feats=17, batch_
                 except Exception as e:
                     print(f"\nError reading {rfile}: {e}")
 
-            print(f"[JetClass/{split}] Saved {write_idx} jets to {output_h5_path}")
+            print(f"[JetClass/train_part{part_id}] Saved {write_idx} jets to {output_h5_path}")
 
-    # Compute Welford statistics on training set only
-    train_h5_path = os.path.join(output_dir, "train.h5")
-    compute_welford_stats(train_h5_path, output_dir, num_feats=num_feats)
+    # 2. Process Test Set
+    test_h5_path = os.path.join(output_dir, "test.h5")
+    print(f"\n[JetClass/test] Processing {len(test_files)} ROOT files -> {test_h5_path}")
+
+    total_test_samples = 0
+    for rfile in test_files:
+        try:
+            tree = uproot.open(rfile)["tree"]
+            total_test_samples += tree.num_entries
+        except Exception as e:
+            print(f"Warning: Could not read {rfile}: {e}")
+
+    with h5py.File(test_h5_path, "w") as fout:
+        dset_X = fout.create_dataset(
+            "particle_features",
+            shape=(total_test_samples, num_particles, num_feats),
+            dtype=np.float32,
+            compression="lzf",
+            chunks=True,
+        )
+        dset_y = fout.create_dataset(
+            "label",
+            shape=(total_test_samples,),
+            dtype=np.int64,
+            compression="lzf",
+            chunks=True,
+        )
+
+        write_idx = 0
+        for rfile in tqdm(test_files, desc="Converting test ROOT files"):
+            try:
+                tree = uproot.open(rfile)["tree"]
+                X_arr, y_arr = build_features_and_labels(tree, max_particles=num_particles)
+                n_entries = X_arr.shape[0]
+
+                dset_X[write_idx : write_idx + n_entries] = X_arr
+                dset_y[write_idx : write_idx + n_entries] = y_arr
+                write_idx += n_entries
+            except Exception as e:
+                print(f"\nError reading {rfile}: {e}")
+
+        print(f"[JetClass/test] Saved {write_idx} jets to {test_h5_path}")
+
+    # 3. Compute Welford statistics on training set only
+    compute_welford_stats(generated_train_h5_paths, output_dir, num_feats=num_feats)
 
 
 if __name__ == "__main__":
