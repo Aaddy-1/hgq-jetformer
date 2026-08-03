@@ -139,11 +139,12 @@ def download_dataset(dataset, basedir, envfile, force_download):
             shutil.rmtree(datadir)
     for subdir, flist in info.items():
         for url, md5 in flist:
-            fpath, download = download_file(
-                url, datadir=datadir, file_hash=md5, force_download=force_download
-            )
             if download:
                 extract_archive(fpath, path=os.path.join(datadir, subdir))
+                # Delete compressed archive after extraction to free disk space
+                if os.path.exists(fpath):
+                    os.remove(fpath)
+                    print(f"[Cleaned] Removed archive {os.path.basename(fpath)}")
 
     datapath = f"DATADIR_{dataset}={datadir}"
     with open(envfile) as f:

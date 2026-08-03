@@ -191,11 +191,12 @@ def compute_welford_stats(train_h5_paths, save_dir, num_feats=17, batch_size=500
     print(f"[Welford] Time taken: {time.time() - start_time:.2f}s")
 
 
-def process_jetclass_root_dir(input_dir, num_particles=128, num_feats=17, batch_size=5000):
+def process_jetclass_root_dir(input_dir, num_particles=128, num_feats=17, batch_size=5000, clean_root=False):
     """
     Scans input directory for JetClass ROOT files, groups training files into
     per-part shards (train_part0.h5, train_part1.h5, ...), converts ROOT files
     to standardized HDF5 shards, and computes global Welford statistics.
+    Optionally deletes ROOT files after HDF5 creation to save disk space.
     """
     if uproot is None or ak is None:
         raise ImportError(
@@ -305,6 +306,12 @@ def process_jetclass_root_dir(input_dir, num_particles=128, num_feats=17, batch_
 
             print(f"[JetClass/train_part{part_id}] Saved {write_idx} jets to {output_h5_path}")
 
+        if clean_root:
+            for rfile in root_files:
+                if os.path.exists(rfile):
+                    os.remove(rfile)
+            print(f"[Cleaned] Removed {len(root_files)} ROOT files for part {part_id}")
+
     # 2. Process Test Set
     test_h5_path = os.path.join(output_dir, "test.h5")
     print(f"\n[JetClass/test] Processing {len(test_files)} ROOT files -> {test_h5_path}")
@@ -348,6 +355,12 @@ def process_jetclass_root_dir(input_dir, num_particles=128, num_feats=17, batch_
 
         print(f"[JetClass/test] Saved {write_idx} jets to {test_h5_path}")
 
+    if clean_root:
+        for rfile in test_files:
+            if os.path.exists(rfile):
+                os.remove(rfile)
+        print(f"[Cleaned] Removed {len(test_files)} test ROOT files")
+
     # 3. Compute Welford statistics on training set only
     compute_welford_stats(generated_train_h5_paths, output_dir, num_feats=num_feats)
 
@@ -373,6 +386,11 @@ if __name__ == "__main__":
         default=17,
         help="Number of features per particle (default: 17)",
     )
+    parser.add_argument(
+        "--clean_root",
+        action="store_true",
+        help="Remove raw .root files after successful conversion to HDF5",
+    )
 
     args = parser.parse_args()
 
@@ -380,4 +398,5 @@ if __name__ == "__main__":
         input_dir=args.input_dir,
         num_particles=args.num_particles,
         num_feats=args.num_feats,
+        clean_root=args.clean_root,
     )
