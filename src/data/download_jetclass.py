@@ -47,7 +47,10 @@ def extract_archive(fpath, path):
     print(f"[Extracting] {fpath} -> {path}")
     os.makedirs(path, exist_ok=True)
     with tarfile.open(fpath, "r:*") as tar:
-        tar.extractall(path=path)
+        if hasattr(tarfile, "data_filter"):
+            tar.extractall(path=path, filter="data")
+        else:
+            tar.extractall(path=path)
     print(f"[Extracted] {os.path.basename(fpath)}")
 
 
