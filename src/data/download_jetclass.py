@@ -1,9 +1,55 @@
 #!/usr/bin/env python3
 
 import argparse
+import hashlib
 import os
 import shutil
-from utils.dataset_utils import get_file, extract_archive
+import tarfile
+import urllib.request
+
+
+def download_file(url, datadir, file_hash, force_download=False):
+    """
+    Downloads a URL to disk with MD5 verification using standard library.
+    """
+    os.makedirs(datadir, exist_ok=True)
+    fname = os.path.basename(url)
+    fpath = os.path.join(datadir, fname)
+
+    if os.path.exists(fpath) and not force_download:
+        md5 = hashlib.md5()
+        with open(fpath, "rb") as f:
+            for chunk in iter(lambda: f.read(8192), b""):
+                md5.update(chunk)
+        if md5.hexdigest() == file_hash:
+            print(f"[Exists] {fname} (MD5 verified: {file_hash})")
+            return fpath, False
+        else:
+            print(f"[MD5 Mismatch] Re-downloading {fname}...")
+
+    print(f"[Downloading] {url} -> {fpath}")
+
+    # Custom download with simple progress reporting
+    def _progress(count, block_size, total_size):
+        percent = int(count * block_size * 100 / total_size) if total_size > 0 else 0
+        mb = count * block_size / (1024 * 1024)
+        print(f"\rDownloading {fname}: {mb:.1f} MB ({percent}%)", end="", flush=True)
+
+    urllib.request.urlretrieve(url, fpath, reporthook=_progress)
+    print(f"\n[Completed] {fname}")
+    return fpath, True
+
+
+def extract_archive(fpath, path):
+    """
+    Extracts a tar archive to disk using built-in tarfile module.
+    """
+    print(f"[Extracting] {fpath} -> {path}")
+    os.makedirs(path, exist_ok=True)
+    with tarfile.open(fpath, "r:*") as tar:
+        tar.extractall(path=path)
+    print(f"[Extracted] {os.path.basename(fpath)}")
+
 
 datasets = {
     "JetClass": {
@@ -90,7 +136,7 @@ def download_dataset(dataset, basedir, envfile, force_download):
             shutil.rmtree(datadir)
     for subdir, flist in info.items():
         for url, md5 in flist:
-            fpath, download = get_file(
+            fpath, download = download_file(
                 url, datadir=datadir, file_hash=md5, force_download=force_download
             )
             if download:
