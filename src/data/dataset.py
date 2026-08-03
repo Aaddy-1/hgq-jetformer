@@ -20,15 +20,21 @@ class JetFormerDataGenerator(keras.utils.PyDataset):
         indices=None,
         x_key="jetConstituentList",
         y_key="jets",
+        num_feats=None,
         **kwargs,
     ):
         super().__init__(**kwargs)
         self.h5_path = h5_path
         self.batch_size = batch_size
         self.shuffle = shuffle
+        self.num_feats = num_feats
 
         self.mean = np.load(os.path.join(stats_dir, "mean.npy"))
         self.std = np.load(os.path.join(stats_dir, "std.npy"))
+
+        if self.num_feats is not None and self.num_feats < len(self.mean):
+            self.mean = self.mean[: self.num_feats]
+            self.std = self.std[: self.num_feats]
 
         with h5py.File(self.h5_path, "r") as f:
             # Auto-detect HDF5 keys for cross-dataset compatibility
@@ -82,6 +88,10 @@ class JetFormerDataGenerator(keras.utils.PyDataset):
             # Contiguous slice (faster I/O)
             x_batch = f[self.x_key][start_idx:end_idx]
             y_batch = f[self.y_key][start_idx:end_idx]
+
+        # On-the-fly feature slicing for feature ablation experiments
+        if self.num_feats is not None and self.num_feats < x_batch.shape[-1]:
+            x_batch = x_batch[:, :, : self.num_feats]
 
         # 1. Statistical Normalization (Z-score)
         x_batch = (x_batch - self.mean) / (self.std + 1e-8)

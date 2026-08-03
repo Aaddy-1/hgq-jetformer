@@ -111,7 +111,14 @@ def extract_model_metadata(model, best_ebops, best_epoch):
 
 def setup_data_generators(num_particles, num_feats, batch_size, val_ratio=0.1, dataset="hls4ml"):
     if dataset == "jetclass":
-        base_path = os.path.join(PROCESSED_DIR, "jetclass", str(num_particles), f"{num_feats}f")
+        # Check if full 17-feature preprocessed dataset exists first (for feature slicing)
+        full_17f_path = os.path.join(PROCESSED_DIR, "jetclass", str(num_particles), "17f")
+        specific_f_path = os.path.join(PROCESSED_DIR, "jetclass", str(num_particles), f"{num_feats}f")
+
+        if os.path.exists(os.path.join(full_17f_path, "train.h5")):
+            base_path = full_17f_path
+        else:
+            base_path = specific_f_path
     else:
         base_path = os.path.join(PROCESSED_DIR, str(num_particles), f"{num_feats}f")
 
@@ -145,6 +152,7 @@ def setup_data_generators(num_particles, num_feats, batch_size, val_ratio=0.1, d
         batch_size=batch_size,
         shuffle=True,
         indices=train_indices,
+        num_feats=num_feats,
     )
     val_gen = JetFormerDataGenerator(
         h5_path=train_h5_path,
@@ -152,9 +160,14 @@ def setup_data_generators(num_particles, num_feats, batch_size, val_ratio=0.1, d
         batch_size=batch_size,
         shuffle=False,
         indices=val_indices,
+        num_feats=num_feats,
     )
     test_gen = JetFormerDataGenerator(
-        h5_path=test_h5_path, stats_dir=base_path, batch_size=batch_size, shuffle=False
+        h5_path=test_h5_path,
+        stats_dir=base_path,
+        batch_size=batch_size,
+        shuffle=False,
+        num_feats=num_feats,
     )
     return train_gen, val_gen, test_gen
 
@@ -590,7 +603,7 @@ if __name__ == "__main__":
     # Resolve dataset-specific defaults
     if args.dataset == "jetclass":
         num_particles = args.num_particles if args.num_particles is not None else 128
-        num_feats = args.num_feats if args.num_feats is not None else 14
+        num_feats = args.num_feats if args.num_feats is not None else 17
     else:
         num_particles = args.num_particles if args.num_particles is not None else 16
         num_feats = args.num_feats if args.num_feats is not None else 3
