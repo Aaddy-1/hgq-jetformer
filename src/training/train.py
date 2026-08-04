@@ -116,6 +116,7 @@ def setup_data_generators(
     val_ratio=0.1,
     dataset="hls4ml",
     train_parts=None,
+    max_samples=None,
 ):
     if dataset == "jetclass":
         base_path = os.path.join(PROCESSED_DIR, "jetclass", str(num_particles), f"{num_feats}f")
@@ -160,7 +161,11 @@ def setup_data_generators(
             total_train_samples += f[x_key].shape[0]
 
     indices = np.random.permutation(total_train_samples)
-    val_size = int(total_train_samples * val_ratio)
+    if max_samples is not None and max_samples < total_train_samples:
+        print(f"[Dataset] Capping total samples from {total_train_samples} to {max_samples}")
+        indices = indices[:max_samples]
+
+    val_size = int(len(indices) * val_ratio)
     val_indices = indices[:val_size]
     train_indices = indices[val_size:]
 
@@ -447,6 +452,7 @@ def train(
     quantize: bool = True,
     dataset: str = "hls4ml",
     train_parts: list = None,
+    max_samples: int = None,
 ):
     # Resolve class registry based on dataset
     classes = JETCLASS_CLASSES if dataset == "jetclass" else HLS4ML_CLASSES
@@ -457,6 +463,7 @@ def train(
         val_ratio=val_ratio,
         dataset=dataset,
         train_parts=train_parts,
+        max_samples=max_samples,
     )
 
     current_model_dir, current_output_dir = resolve_experiment_paths(
@@ -617,6 +624,12 @@ if __name__ == "__main__":
         help="Specific training part indices to train on (e.g. --train_parts 0 or --train_parts 0 1 2)",
     )
     parser.add_argument(
+        "--max_samples",
+        type=int,
+        default=None,
+        help="Maximum total samples to use for training + validation (e.g. 2000000)",
+    )
+    parser.add_argument(
         "--experiment", type=str, default=None, help="Name of the experiment folder"
     )
     parser.add_argument(
@@ -649,4 +662,5 @@ if __name__ == "__main__":
         quantize=args.quantize,
         dataset=args.dataset,
         train_parts=args.train_parts,
+        max_samples=args.max_samples,
     )
