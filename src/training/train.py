@@ -85,7 +85,7 @@ class EbopsCaptureCallback(keras.callbacks.Callback):
             self.best_epoch = epoch
 
 
-def extract_model_metadata(model, best_ebops, best_epoch):
+def extract_model_metadata(model, best_ebops, best_epoch, num_test_samples=None):
     layers_metadata = []
     for layer in model.layers:
         try:
@@ -101,12 +101,15 @@ def extract_model_metadata(model, best_ebops, best_epoch):
                 "params": int(layer.count_params()),
             }
         )
-    return {
+    metadata = {
         "ebops": best_ebops,
         "best_epoch": best_epoch,
         "total_parameters": int(model.count_params()),
         "layers": layers_metadata,
     }
+    if num_test_samples is not None:
+        metadata["num_test_samples"] = int(num_test_samples)
+    return metadata
 
 
 def setup_data_generators(
@@ -150,51 +153,101 @@ def setup_data_generators(
 
     import h5py
 
+    # Detect x_key and total sample count
     total_train_samples = 0
+    x_key = None
+    y_key = None
     for p in train_h5_paths:
         with h5py.File(p, "r") as f:
-            if "jetConstituentList" in f:
-                x_key = "jetConstituentList"
-            elif "particle_features" in f:
-                x_key = "particle_features"
-            else:
-                x_key = list(f.keys())[0]
+            if x_key is None:
+                if "jetConstituentList" in f:
+                    x_key = "jetConstituentList"
+                elif "particle_features" in f:
+                    x_key = "particle_features"
+                else:
+                    x_key = list(f.keys())[0]
+                y_key = "jets" if "jets" in f else ("label" if "label" in f else list(f.keys())[1])
             total_train_samples += f[x_key].shape[0]
 
-    indices = np.random.permutation(total_train_samples)
+    # Use contiguous indices to enable efficient HDF5 slicing
     if max_samples is not None and max_samples < total_train_samples:
         print(f"[Dataset] Capping total samples from {total_train_samples} to {max_samples}")
-        indices = indices[:max_samples]
+        indices = np.arange(max_samples)
+    else:
+        indices = np.arange(total_train_samples)
+    np.random.shuffle(indices)  # Shuffle for random train/val split
 
     val_size = int(len(indices) * val_ratio)
     val_indices = indices[:val_size]
     train_indices = indices[val_size:]
 
-    train_gen = JetFormerDataGenerator(
-        h5_path=train_h5_paths,
-        stats_dir=base_path,
-        batch_size=batch_size,
-        shuffle=True,
-        indices=train_indices,
-        num_feats=num_feats,
-        in_memory=in_memory,
-    )
-    val_gen = JetFormerDataGenerator(
-        h5_path=train_h5_paths,
-        stats_dir=base_path,
-        batch_size=batch_size,
-        shuffle=False,
-        indices=val_indices,
-        num_feats=num_feats,
-        in_memory=in_memory,
-    )
+    if in_memory:
+        # Shared single-read: load the contiguous slice once, share between train/val
+        max_needed = int(np.max(indices)) + 1
+        print(f"[Dataset] Loading {max_needed} contiguous samples from disk (single read)...")
+        x_list = []
+        y_list = []
+        loaded_so_far = 0
+        for p in train_h5_paths:
+            with h5py.File(p, "r") as f:
+                file_len = f[x_key].shape[0]
+                if max_needed <= loaded_so_far:
+                    break
+                slice_end = min(file_len, max_needed - loaded_so_far)
+                x_list.append(f[x_key][:slice_end])
+                y_list.append(f[y_key][:slice_end])
+                loaded_so_far += slice_end
+
+        shared_x = np.concatenate(x_list, axis=0) if len(x_list) > 1 else x_list[0]
+        shared_y = np.concatenate(y_list, axis=0) if len(y_list) > 1 else y_list[0]
+        print(f"[Dataset] Shared data loaded. Splitting train ({len(train_indices)}) / val ({len(val_indices)})...")
+
+        train_gen = JetFormerDataGenerator(
+            h5_path=train_h5_paths,
+            stats_dir=base_path,
+            batch_size=batch_size,
+            shuffle=True,
+            num_feats=num_feats,
+            preloaded_data=(shared_x[train_indices], shared_y[train_indices]),
+        )
+        val_gen = JetFormerDataGenerator(
+            h5_path=train_h5_paths,
+            stats_dir=base_path,
+            batch_size=batch_size,
+            shuffle=False,
+            num_feats=num_feats,
+            preloaded_data=(shared_x[val_indices], shared_y[val_indices]),
+        )
+        # Free the shared arrays after splitting
+        del shared_x, shared_y
+    else:
+        train_gen = JetFormerDataGenerator(
+            h5_path=train_h5_paths,
+            stats_dir=base_path,
+            batch_size=batch_size,
+            shuffle=True,
+            indices=train_indices,
+            num_feats=num_feats,
+            in_memory=False,
+        )
+        val_gen = JetFormerDataGenerator(
+            h5_path=train_h5_paths,
+            stats_dir=base_path,
+            batch_size=batch_size,
+            shuffle=False,
+            indices=val_indices,
+            num_feats=num_feats,
+            in_memory=False,
+        )
+
+    # test_gen ALWAYS streams sequentially from disk (never pre-loaded)
     test_gen = JetFormerDataGenerator(
         h5_path=test_h5_path,
         stats_dir=base_path,
         batch_size=batch_size,
         shuffle=False,
         num_feats=num_feats,
-        in_memory=in_memory,
+        in_memory=False,
     )
     return train_gen, val_gen, test_gen
 
@@ -421,7 +474,9 @@ def run_post_training_pipeline(
             model.save(model_path)
             print(f"Final model saved to: {model_path}")
         if eval_results_path:
-            metadata = extract_model_metadata(model, best_ebops, best_epoch)
+            metadata = extract_model_metadata(
+                model, best_ebops, best_epoch, num_test_samples=len(labels)
+            )
             save_final_evaluation(
                 test_acc,
                 test_class_accs,

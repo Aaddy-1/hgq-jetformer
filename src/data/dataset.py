@@ -69,6 +69,7 @@ class JetFormerDataGenerator(keras.utils.PyDataset):
         y_key="jets",
         num_feats=None,
         in_memory=False,
+        preloaded_data=None,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -89,6 +90,15 @@ class JetFormerDataGenerator(keras.utils.PyDataset):
             self.mean = self.mean[: self.num_feats]
             self.std = self.std[: self.num_feats]
 
+        self.x_data = None
+        self.y_data = None
+
+        if preloaded_data is not None:
+            # Use pre-loaded numpy arrays directly (shared single-read path)
+            self._init_from_preloaded(preloaded_data)
+            return
+
+        # HDF5 file-based initialization (detect keys and file lengths)
         self.file_lengths = []
         with h5py.File(self.h5_paths[0], "r") as f:
             if x_key not in f:
@@ -115,9 +125,6 @@ class JetFormerDataGenerator(keras.utils.PyDataset):
             self.indices = np.arange(total_length)
             self.length = total_length
 
-        self.x_data = None
-        self.y_data = None
-
         if self.in_memory:
             self._preload_into_ram()
         else:
@@ -125,6 +132,29 @@ class JetFormerDataGenerator(keras.utils.PyDataset):
             self.num_blocks = int(np.ceil(self.length / self.batch_size))
             self.block_order = np.arange(self.num_blocks)
             self.on_epoch_end()
+
+    def _init_from_preloaded(self, preloaded_data):
+        """Initialize from pre-loaded numpy arrays. Applies normalization and label conversion."""
+        raw_x, raw_y = preloaded_data
+
+        if self.num_feats is not None and self.num_feats < raw_x.shape[-1]:
+            raw_x = raw_x[:, :, : self.num_feats]
+
+        # Z-score normalization
+        raw_x = (raw_x - self.mean) / (self.std + 1e-8)
+
+        # Convert one-hot to sparse categorical indices
+        if raw_y.ndim > 1 and raw_y.shape[-1] > 1:
+            raw_y = np.argmax(raw_y, axis=-1)
+
+        self.x_data = raw_x.astype(np.float32)
+        self.y_data = raw_y.astype(np.int64)
+        self.in_memory = True
+        self.indices = np.arange(len(self.x_data))
+        self.length = len(self.x_data)
+        if self.shuffle:
+            np.random.shuffle(self.indices)
+        print(f"[JetFormerDataGenerator] Preloaded data ready. Shape: {self.x_data.shape}")
 
     def _preload_into_ram(self):
         print(f"[JetFormerDataGenerator] Pre-loading {self.length} samples into RAM...")
