@@ -1,3 +1,9 @@
+import numpy as np
+import h5py
+import os
+import keras
+
+
 def detect_hardware_and_strategy(num_samples, num_particles=128, num_feats=17, ram_safety_ratio=0.50):
     """
     Auto-detects active GPUs and available system RAM.
