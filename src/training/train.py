@@ -22,7 +22,7 @@ from hgq.regularizers import MonoL1
 from hgq.utils.sugar.early_stopping_ebops import EarlyStoppingWithEbopsThres
 
 # Relative imports
-from src.data.dataset import JetFormerDataGenerator
+from src.data.dataset import JetFormerDataGenerator, detect_hardware_and_strategy
 from src.model.jetformer import build_hgq_jetformer
 from src.training.onecyclelr import OneCycleLR, build_lr_schedule
 
@@ -660,11 +660,18 @@ if __name__ == "__main__":
         num_particles = args.num_particles if args.num_particles is not None else 16
         num_feats = args.num_feats if args.num_feats is not None else 3
 
-    # Default in_memory to True if max_samples is specified and <= 5M, or if explicitly requested
+    # Dynamic hardware auto-detection for RAM & GPU budget
+    approx_samples = args.max_samples if args.max_samples is not None else 10000000
     if args.in_memory is not None:
         in_memory = args.in_memory
     else:
-        in_memory = True if (args.max_samples is not None and args.max_samples <= 5000000) or (args.train_parts is not None and len(args.train_parts) <= 1) else False
+        strategy = detect_hardware_and_strategy(
+            num_samples=approx_samples,
+            num_particles=num_particles,
+            num_feats=num_feats,
+            ram_safety_ratio=0.50,
+        )
+        in_memory = (strategy == "FULL_RAM")
 
     train(
         num_particles=num_particles,
