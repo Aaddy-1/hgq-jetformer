@@ -117,6 +117,7 @@ def setup_data_generators(
     dataset="hls4ml",
     train_parts=None,
     max_samples=None,
+    in_memory=False,
 ):
     if dataset == "jetclass":
         base_path = os.path.join(PROCESSED_DIR, "jetclass", str(num_particles), f"{num_feats}f")
@@ -176,6 +177,7 @@ def setup_data_generators(
         shuffle=True,
         indices=train_indices,
         num_feats=num_feats,
+        in_memory=in_memory,
     )
     val_gen = JetFormerDataGenerator(
         h5_path=train_h5_paths,
@@ -184,6 +186,7 @@ def setup_data_generators(
         shuffle=False,
         indices=val_indices,
         num_feats=num_feats,
+        in_memory=in_memory,
     )
     test_gen = JetFormerDataGenerator(
         h5_path=test_h5_path,
@@ -191,6 +194,7 @@ def setup_data_generators(
         batch_size=batch_size,
         shuffle=False,
         num_feats=num_feats,
+        in_memory=in_memory,
     )
     return train_gen, val_gen, test_gen
 
@@ -453,6 +457,7 @@ def train(
     dataset: str = "hls4ml",
     train_parts: list = None,
     max_samples: int = None,
+    in_memory: bool = False,
 ):
     # Resolve class registry based on dataset
     classes = JETCLASS_CLASSES if dataset == "jetclass" else HLS4ML_CLASSES
@@ -464,6 +469,7 @@ def train(
         dataset=dataset,
         train_parts=train_parts,
         max_samples=max_samples,
+        in_memory=in_memory,
     )
 
     current_model_dir, current_output_dir = resolve_experiment_paths(
@@ -638,6 +644,12 @@ if __name__ == "__main__":
         default=True,
         help="Enable HGQ2 quantization",
     )
+    parser.add_argument(
+        "--in_memory",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Pre-load dataset into RAM for ultra-fast training (default: True for max_samples <= 5M or single part)",
+    )
     args = parser.parse_args()
 
     # Resolve dataset-specific defaults
@@ -647,6 +659,12 @@ if __name__ == "__main__":
     else:
         num_particles = args.num_particles if args.num_particles is not None else 16
         num_feats = args.num_feats if args.num_feats is not None else 3
+
+    # Default in_memory to True if max_samples is specified and <= 5M, or if explicitly requested
+    if args.in_memory is not None:
+        in_memory = args.in_memory
+    else:
+        in_memory = True if (args.max_samples is not None and args.max_samples <= 5000000) or (args.train_parts is not None and len(args.train_parts) <= 1) else False
 
     train(
         num_particles=num_particles,
@@ -663,4 +681,5 @@ if __name__ == "__main__":
         dataset=args.dataset,
         train_parts=args.train_parts,
         max_samples=args.max_samples,
+        in_memory=in_memory,
     )
