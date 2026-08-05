@@ -101,7 +101,7 @@ def run_standalone_evaluation(
         print("[HGQ] Profiling complete. Integer boundaries calibrated.")
 
     print(f"\nExecuting Inference on Test Set ({len(test_gen.indices):,} samples)...")
-    outputs = model.predict(test_gen, workers=4, use_multiprocessing=True)
+    outputs = model.predict(test_gen)
     labels = np.concatenate([y for _, y in test_gen], axis=0)
     test_acc, test_class_accs, test_aucs = evaluate(outputs, labels, classes)
 
