@@ -10,7 +10,11 @@ from sklearn.metrics import accuracy_score, roc_auc_score
 os.environ["KERAS_BACKEND"] = "tensorflow"
 from hgq.utils import trace_minmax
 
-from src.data.dataset import JetFormerDataGenerator, detect_hardware_and_strategy
+from src.data.dataset import (
+    JetFormerDataGenerator,
+    detect_hardware_and_strategy,
+    get_stratified_indices,
+)
 from src.training.train import (
     HLS4ML_CLASSES,
     JETCLASS_CLASSES,
@@ -74,14 +78,18 @@ def run_standalone_evaluation(
 
     with h5py.File(test_h5_path, "r") as f:
         key = "jetConstituentList" if "jetConstituentList" in f else ("particle_features" if "particle_features" in f else list(f.keys())[0])
+        y_key = "jets" if "jets" in f else ("label" if "label" in f else list(f.keys())[1])
         total_test_samples = f[key].shape[0]
+        y_test_all = f[y_key][:]
 
-    if max_test_samples is not None and max_test_samples > 0:
-        eval_samples = min(max_test_samples, total_test_samples)
-        test_indices = np.arange(eval_samples)
+    if max_test_samples is not None and max_test_samples > 0 and max_test_samples < total_test_samples:
+        eval_samples = max_test_samples
+        print(f"[Evaluate] Performing exact stratified sampling for {eval_samples:,} test samples across all classes...")
+        test_indices = get_stratified_indices(y_test_all, eval_samples, seed=42)
     else:
         eval_samples = total_test_samples
         test_indices = np.arange(total_test_samples)
+    del y_test_all
 
     if quantize:
         print("\n[HGQ] Initiating activation profiling for WRAP mode calibration...")

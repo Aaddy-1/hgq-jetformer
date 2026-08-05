@@ -51,6 +51,36 @@ def detect_hardware_and_strategy(num_samples, num_particles=128, num_feats=17, r
     return strategy
 
 
+def get_stratified_indices(y_labels: np.ndarray, max_samples: int, seed: int = 42) -> np.ndarray:
+    """
+    Computes exact stratified indices across all unique classes in y_labels.
+    Ensures every class receives an identical quota of max_samples // n_classes.
+    """
+    if y_labels.ndim > 1 and y_labels.shape[-1] > 1:
+        y_labels = np.argmax(y_labels, axis=-1)
+
+    rng = np.random.default_rng(seed)
+    unique_classes = np.unique(y_labels)
+    n_classes = len(unique_classes)
+    per_class_quota = max_samples // n_classes
+
+    print(
+        f"[Stratified] Sampling exactly {per_class_quota:,} items per class "
+        f"across {n_classes} classes ({per_class_quota * n_classes:,} total samples)..."
+    )
+
+    stratified_indices = []
+    for cls in unique_classes:
+        cls_indices = np.where(y_labels == cls)[0]
+        quota = min(per_class_quota, len(cls_indices))
+        selected = rng.choice(cls_indices, size=quota, replace=False)
+        stratified_indices.append(selected)
+
+    result = np.concatenate(stratified_indices)
+    rng.shuffle(result)
+    return result
+
+
 class JetFormerDataGenerator(keras.utils.PyDataset):
     """
     Keras 3 PyDataset for batched HDF5 streaming and high-performance RAM caching.
@@ -235,9 +265,17 @@ class JetFormerDataGenerator(keras.utils.PyDataset):
             f = self._get_file(f_idx)
             min_i, max_i = np.min(sub_indices), np.max(sub_indices)
 
-            # Contiguous slice read from HDF5
-            x_sub = f[self.x_key][min_i : max_i + 1]
-            y_sub = f[self.y_key][min_i : max_i + 1]
+            # Efficient slice vs fancy indexing read from HDF5
+            if (max_i - min_i + 1) > len(sub_indices) * 4:
+                sort_idx = np.argsort(sub_indices)
+                sorted_sub = sub_indices[sort_idx]
+                inv_sort = np.argsort(sort_idx)
+                x_sub = f[self.x_key][sorted_sub][inv_sort]
+                y_sub = f[self.y_key][sorted_sub][inv_sort]
+            else:
+                rel_indices = sub_indices - min_i
+                x_sub = f[self.x_key][min_i : max_i + 1][rel_indices]
+                y_sub = f[self.y_key][min_i : max_i + 1][rel_indices]
 
             x_chunks.append(x_sub)
             y_chunks.append(y_sub)

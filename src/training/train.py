@@ -22,7 +22,11 @@ from hgq.regularizers import MonoL1
 from hgq.utils.sugar.early_stopping_ebops import EarlyStoppingWithEbopsThres
 
 # Relative imports
-from src.data.dataset import JetFormerDataGenerator, detect_hardware_and_strategy
+from src.data.dataset import (
+    JetFormerDataGenerator,
+    detect_hardware_and_strategy,
+    get_stratified_indices,
+)
 from src.model.jetformer import build_hgq_jetformer
 from src.training.onecyclelr import OneCycleLR, build_lr_schedule
 
@@ -181,13 +185,19 @@ def setup_data_generators(
                 y_key = "jets" if "jets" in f else ("label" if "label" in f else list(f.keys())[1])
             total_train_samples += f[x_key].shape[0]
 
-    # Use contiguous indices to enable efficient HDF5 slicing
     if max_samples is not None and max_samples < total_train_samples:
-        print(f"[Dataset] Capping total samples from {total_train_samples} to {max_samples}")
-        indices = np.arange(max_samples)
+        print(f"[Dataset] Capping total samples from {total_train_samples:,} to {max_samples:,}")
+        # Load 1D label vector across training shard(s) for exact stratified sampling
+        y_list = []
+        for p in train_h5_paths:
+            with h5py.File(p, "r") as f:
+                y_list.append(f[y_key][:])
+        y_all = np.concatenate(y_list, axis=0) if len(y_list) > 1 else y_list[0]
+        indices = get_stratified_indices(y_all, max_samples, seed=42)
+        del y_list, y_all
     else:
         indices = np.arange(total_train_samples)
-    np.random.shuffle(indices)  # Shuffle for random train/val split
+        np.random.shuffle(indices)  # Shuffle for random train/val split
 
     val_size = int(len(indices) * val_ratio)
     val_indices = indices[:val_size]
