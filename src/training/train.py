@@ -51,18 +51,19 @@ EBOPS_WARMUP_EPOCH = 75
 
 
 class EbopsCaptureCallback(keras.callbacks.Callback):
-    """Captures the EBOPs and accuracy metadata of the best model.
+    """Captures the EBOPs and accuracy metadata of the best model and saves checkpoint.
 
-    Note: Model saving is handled by EarlyStoppingWithEbopsThres
-    (restore_best_weights=True). This callback only tracks metadata.
+    Note: Saves model checkpoint directly to disk whenever a new best validation
+    accuracy is achieved with valid EBOPs (<= 450,000) after warmup.
     """
 
-    def __init__(self, start_from_epoch=EBOPS_WARMUP_EPOCH):
+    def __init__(self, start_from_epoch=EBOPS_WARMUP_EPOCH, model_path=None):
         super().__init__()
         self.best_val_acc = -float("inf")
         self.best_ebops = None
         self.best_epoch = None
         self.start_from_epoch = start_from_epoch
+        self.model_path = model_path
 
     def _get_ebops(self):
         ebops = 0.0
@@ -79,10 +80,20 @@ class EbopsCaptureCallback(keras.callbacks.Callback):
 
         logs = logs or {}
         val_acc = logs.get("val_sparse_categorical_accuracy")
-        if val_acc is not None and val_acc > self.best_val_acc:
-            self.best_val_acc = val_acc
-            self.best_ebops = self._get_ebops()
-            self.best_epoch = epoch
+        ebops = self._get_ebops()
+
+        # Save checkpoint ONLY if EBOPs satisfy the 450k threshold constraint
+        if ebops is None or ebops <= 450000.0:
+            if val_acc is not None and val_acc > self.best_val_acc:
+                self.best_val_acc = val_acc
+                self.best_ebops = ebops
+                self.best_epoch = epoch
+                if self.model_path:
+                    self.model.save(self.model_path)
+                    print(
+                        f"\n[Checkpoint] Saved new best EBOP-compliant model "
+                        f"(val_acc: {val_acc:.4f}, ebops: {ebops if ebops is not None else 0:.0f}) to {self.model_path}"
+                    )
 
 
 def extract_model_metadata(model, best_ebops, best_epoch, num_test_samples=None):
@@ -121,6 +132,7 @@ def setup_data_generators(
     train_parts=None,
     max_samples=None,
     in_memory=False,
+    max_test_samples=2000000,
 ):
     if dataset == "jetclass":
         base_path = os.path.join(PROCESSED_DIR, "jetclass", str(num_particles), f"{num_feats}f")
@@ -241,11 +253,21 @@ def setup_data_generators(
         )
 
     # test_gen ALWAYS streams sequentially from disk (never pre-loaded)
+    with h5py.File(test_h5_path, "r") as f:
+        key = "jetConstituentList" if "jetConstituentList" in f else ("particle_features" if "particle_features" in f else list(f.keys())[0])
+        total_test_samples = f[key].shape[0]
+
+    if max_test_samples is not None and max_test_samples > 0:
+        test_indices = np.arange(min(max_test_samples, total_test_samples))
+    else:
+        test_indices = None
+
     test_gen = JetFormerDataGenerator(
         h5_path=test_h5_path,
         stats_dir=base_path,
         batch_size=batch_size,
         shuffle=False,
+        indices=test_indices,
         num_feats=num_feats,
         in_memory=False,
     )
@@ -361,7 +383,9 @@ def resolve_experiment_paths(experiment: str, quantize: bool) -> tuple[str, str]
     return current_model_dir, current_output_dir
 
 
-def build_callbacks(early_stopping_patience: int, quantize: bool):
+def build_callbacks(
+    early_stopping_patience: int, quantize: bool, model_path: str = None
+):
     callbacks = []
 
     if quantize:
@@ -422,7 +446,8 @@ def build_callbacks(early_stopping_patience: int, quantize: bool):
         )
 
     ebops_capture = EbopsCaptureCallback(
-        start_from_epoch=EBOPS_WARMUP_EPOCH if quantize else 0
+        start_from_epoch=EBOPS_WARMUP_EPOCH if quantize else 0,
+        model_path=model_path,
     )
     callbacks.append(ebops_capture)
 
@@ -447,46 +472,36 @@ def run_post_training_pipeline(
     # Best weights are already restored by EarlyStoppingWithEbopsThres
     # (restore_best_weights=True) or keras.callbacks.EarlyStopping.
 
-    if quantize:
-        # --- Diagnostic: Evaluate BEFORE trace_minmax ---
-        print("\n[Diagnostic] Evaluating model BEFORE trace_minmax...")
-        pre_outputs = model.predict(test_gen)
-        pre_labels = np.concatenate([y for _, y in test_gen], axis=0)
-        pre_acc = accuracy_score(pre_labels, pre_outputs.argmax(axis=1))
-        print(f"[Diagnostic] Pre-trace_minmax accuracy: {pre_acc:.4f}")
+    if save and model_path:
+        model.save(model_path)
+        print(f"\n[Check] Saved best model checkpoint to: {model_path}")
 
+    if quantize:
         print("\n[HGQ] Initiating activation profiling for WRAP mode calibration...")
         it = iter(train_gen)
         x_calib = np.concatenate([next(it)[0] for _ in range(10)], axis=0)
         trace_minmax(model, x_calib)
         print("[HGQ] Profiling complete. Integer boundaries calibrated.")
 
-    print("\nExecuting Final Inference on Test Set...")
-    outputs = model.predict(test_gen)
+    print(f"\nExecuting Final Inference on Test Set ({len(test_gen.indices):,} samples)...")
+    outputs = model.predict(test_gen, workers=4, use_multiprocessing=True)
     labels = np.concatenate([y for _, y in test_gen], axis=0)
     test_acc, test_class_accs, test_aucs = evaluate(outputs, labels, classes)
 
-    if quantize:
-        print(f"\n[Diagnostic] trace_minmax accuracy delta: {test_acc - pre_acc:+.4f}")
-
-    if save:
-        if model_path:
-            model.save(model_path)
-            print(f"Final model saved to: {model_path}")
-        if eval_results_path:
-            metadata = extract_model_metadata(
-                model, best_ebops, best_epoch, num_test_samples=len(labels)
-            )
-            save_final_evaluation(
-                test_acc,
-                test_class_accs,
-                test_aucs,
-                classes,
-                metadata,
-                config,
-                eval_results_path,
-            )
-            print(f"Final metrics and metadata saved to: {eval_results_path}")
+    if save and eval_results_path:
+        metadata = extract_model_metadata(
+            model, best_ebops, best_epoch, num_test_samples=len(labels)
+        )
+        save_final_evaluation(
+            test_acc,
+            test_class_accs,
+            test_aucs,
+            classes,
+            metadata,
+            config,
+            eval_results_path,
+        )
+        print(f"Final metrics and metadata saved to: {eval_results_path}")
 
 
 def train(
@@ -513,6 +528,7 @@ def train(
     train_parts: list = None,
     max_samples: int = None,
     in_memory: bool = False,
+    max_test_samples: int = 2000000,
 ):
     # Resolve class registry based on dataset
     classes = JETCLASS_CLASSES if dataset == "jetclass" else HLS4ML_CLASSES
@@ -525,6 +541,7 @@ def train(
         train_parts=train_parts,
         max_samples=max_samples,
         in_memory=in_memory,
+        max_test_samples=max_test_samples,
     )
 
     current_model_dir, current_output_dir = resolve_experiment_paths(
@@ -618,7 +635,9 @@ def train(
             metrics=["sparse_categorical_accuracy"],
         )
 
-        callbacks, ebops_capture = build_callbacks(early_stopping_patience, quantize)
+        callbacks, ebops_capture = build_callbacks(
+            early_stopping_patience, quantize, model_path=model_path if save else None
+        )
 
         if do_train:
             print(
@@ -705,6 +724,12 @@ if __name__ == "__main__":
         default=None,
         help="Pre-load dataset into RAM for ultra-fast training (default: True for max_samples <= 5M or single part)",
     )
+    parser.add_argument(
+        "--max_test_samples",
+        type=int,
+        default=2000000,
+        help="Maximum test set samples for evaluation (default: 2,000,000)",
+    )
     args = parser.parse_args()
 
     # Resolve dataset-specific defaults
@@ -744,4 +769,5 @@ if __name__ == "__main__":
         train_parts=args.train_parts,
         max_samples=args.max_samples,
         in_memory=in_memory,
+        max_test_samples=args.max_test_samples,
     )
