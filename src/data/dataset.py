@@ -157,20 +157,28 @@ class JetFormerDataGenerator(keras.utils.PyDataset):
         print(f"[JetFormerDataGenerator] Preloaded data ready. Shape: {self.x_data.shape}")
 
     def _preload_into_ram(self):
-        print(f"[JetFormerDataGenerator] Pre-loading {self.length} samples into RAM...")
+        max_needed = int(np.max(self.indices)) + 1 if self.indices is not None and len(self.indices) > 0 else None
+        print(f"[JetFormerDataGenerator] Pre-loading {self.length} samples (reading up to index {max_needed if max_needed else 'end'}) into RAM...")
         x_list = []
         y_list = []
+        loaded_so_far = 0
 
         for p in self.h5_paths:
             with h5py.File(p, "r") as f:
-                x_list.append(f[self.x_key][:])
-                y_list.append(f[self.y_key][:])
+                file_len = f[self.x_key].shape[0]
+                if max_needed is not None and max_needed <= loaded_so_far:
+                    break
+                slice_end = min(file_len, max_needed - loaded_so_far) if max_needed is not None else file_len
+                x_list.append(f[self.x_key][:slice_end])
+                y_list.append(f[self.y_key][:slice_end])
+                loaded_so_far += slice_end
 
         all_x = np.concatenate(x_list, axis=0) if len(x_list) > 1 else x_list[0]
         all_y = np.concatenate(y_list, axis=0) if len(y_list) > 1 else y_list[0]
 
-        all_x = all_x[self.indices]
-        all_y = all_y[self.indices]
+        if self.indices is not None:
+            all_x = all_x[self.indices]
+            all_y = all_y[self.indices]
 
         if self.num_feats is not None and self.num_feats < all_x.shape[-1]:
             all_x = all_x[:, :, : self.num_feats]
