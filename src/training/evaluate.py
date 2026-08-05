@@ -30,6 +30,7 @@ def run_standalone_evaluation(
     quantize: bool = True,
     dataset: str = "jetclass",
     model_path: str = None,
+    in_memory: bool = True,
 ):
     classes = JETCLASS_CLASSES if dataset == "jetclass" else HLS4ML_CLASSES
     current_model_dir, current_output_dir = resolve_experiment_paths(
@@ -82,7 +83,7 @@ def run_standalone_evaluation(
         shuffle=False,
         indices=test_indices,
         num_feats=num_feats,
-        in_memory=False,
+        in_memory=in_memory,
     )
 
     if quantize:
@@ -160,6 +161,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "--model_path", type=str, default=None, help="Explicit path to model file"
     )
+    parser.add_argument(
+        "--in_memory",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Pre-load test set into RAM for ultra-fast evaluation (default: True)",
+    )
     args = parser.parse_args()
 
     run_standalone_evaluation(
@@ -171,4 +178,5 @@ if __name__ == "__main__":
         quantize=args.quantize,
         dataset=args.dataset,
         model_path=args.model_path,
+        in_memory=args.in_memory,
     )
