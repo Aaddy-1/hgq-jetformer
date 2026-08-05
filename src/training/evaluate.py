@@ -84,8 +84,15 @@ def run_standalone_evaluation(
 
     if max_test_samples is not None and max_test_samples > 0 and max_test_samples < total_test_samples:
         eval_samples = max_test_samples
-        print(f"[Evaluate] Performing exact stratified sampling for {eval_samples:,} test samples across all classes...")
-        test_indices = get_stratified_indices(y_test_all, eval_samples, seed=42)
+        print(f"[Evaluate] Fast 10-block slice sampling for {eval_samples:,} test samples across all 10 classes...")
+        unique_classes = np.unique(y_test_all)
+        quota = eval_samples // len(unique_classes)
+        idx_chunks = []
+        for cls in unique_classes:
+            cls_indices = np.where(y_test_all == cls)[0]
+            start_i = cls_indices[0]
+            idx_chunks.append(np.arange(start_i, start_i + quota))
+        test_indices = np.concatenate(idx_chunks)
     else:
         eval_samples = total_test_samples
         test_indices = np.arange(total_test_samples)
