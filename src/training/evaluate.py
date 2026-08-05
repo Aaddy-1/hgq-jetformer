@@ -102,12 +102,17 @@ def run_standalone_evaluation(
 
     # Determine initial strategy via hardware detection
     if in_memory:
-        strategy = detect_hardware_and_strategy(
-            num_samples=eval_samples,
-            num_particles=num_particles,
-            num_feats=num_feats,
-            ram_safety_ratio=0.50,
-        )
+        if eval_samples > 5000000:
+            print(f"\n[Evaluate] Large sample count detected ({eval_samples:,} > 5,000,000).")
+            print("[Evaluate] Automatically selecting Option 2 (CHUNKED_RAM) for 100% OOM safety.")
+            strategy = "CHUNKED_RAM"
+        else:
+            strategy = detect_hardware_and_strategy(
+                num_samples=eval_samples,
+                num_particles=num_particles,
+                num_feats=num_feats,
+                ram_safety_ratio=0.50,
+            )
     else:
         strategy = "SEQUENTIAL_DISK_STREAM"
 
