@@ -1,6 +1,8 @@
 import os
 import argparse
 import json
+import glob
+import gc
 import numpy as np
 import keras
 from sklearn.metrics import accuracy_score, roc_auc_score
@@ -8,7 +10,7 @@ from sklearn.metrics import accuracy_score, roc_auc_score
 os.environ["KERAS_BACKEND"] = "tensorflow"
 from hgq.utils import trace_minmax
 
-from src.data.dataset import JetFormerDataGenerator
+from src.data.dataset import JetFormerDataGenerator, detect_hardware_and_strategy
 from src.training.train import (
     HLS4ML_CLASSES,
     JETCLASS_CLASSES,
@@ -58,7 +60,10 @@ def run_standalone_evaluation(
 
     if dataset == "jetclass":
         base_path = os.path.join(PROCESSED_DIR, "jetclass", str(num_particles), f"{num_feats}f")
-        train_h5_path = os.path.join(base_path, "train_0.h5")
+        if not os.path.exists(base_path):
+            base_path = os.path.join(PROCESSED_DIR, "jetclass", str(num_particles), "17f")
+        part_files = sorted(glob.glob(os.path.join(base_path, "train_part*.h5")))
+        train_h5_path = part_files[0] if part_files else os.path.join(base_path, "train.h5")
     else:
         base_path = os.path.join(PROCESSED_DIR, str(num_particles), f"{num_feats}f")
         train_h5_path = os.path.join(base_path, "train.h5")
@@ -72,19 +77,11 @@ def run_standalone_evaluation(
         total_test_samples = f[key].shape[0]
 
     if max_test_samples is not None and max_test_samples > 0:
-        test_indices = np.arange(min(max_test_samples, total_test_samples))
+        eval_samples = min(max_test_samples, total_test_samples)
+        test_indices = np.arange(eval_samples)
     else:
-        test_indices = None
-
-    test_gen = JetFormerDataGenerator(
-        h5_path=test_h5_path,
-        stats_dir=base_path,
-        batch_size=batch_size,
-        shuffle=False,
-        indices=test_indices,
-        num_feats=num_feats,
-        in_memory=in_memory,
-    )
+        eval_samples = total_test_samples
+        test_indices = np.arange(total_test_samples)
 
     if quantize:
         print("\n[HGQ] Initiating activation profiling for WRAP mode calibration...")
@@ -101,9 +98,94 @@ def run_standalone_evaluation(
         trace_minmax(model, x_calib)
         print("[HGQ] Profiling complete. Integer boundaries calibrated.")
 
-    print(f"\nExecuting Inference on Test Set ({len(test_gen.indices):,} samples)...")
-    outputs = model.predict(test_gen)
-    labels = np.concatenate([y for _, y in test_gen], axis=0)
+    print(f"\nExecuting Inference on Test Set ({eval_samples:,} samples)...")
+
+    # Determine initial strategy via hardware detection
+    if in_memory:
+        strategy = detect_hardware_and_strategy(
+            num_samples=eval_samples,
+            num_particles=num_particles,
+            num_feats=num_feats,
+            ram_safety_ratio=0.50,
+        )
+    else:
+        strategy = "SEQUENTIAL_DISK_STREAM"
+
+    outputs = None
+    labels = None
+
+    # Tier 1: FULL_RAM
+    if strategy == "FULL_RAM":
+        print("\n[Evaluate] Strategy Selected: Option 1 (FULL_RAM - Entire dataset fits safely in RAM)")
+        try:
+            test_gen = JetFormerDataGenerator(
+                h5_path=test_h5_path,
+                stats_dir=base_path,
+                batch_size=batch_size,
+                shuffle=False,
+                indices=test_indices,
+                num_feats=num_feats,
+                in_memory=True,
+            )
+            outputs = model.predict(test_gen)
+            labels = np.concatenate([y for _, y in test_gen], axis=0)
+        except (MemoryError, Exception) as e:
+            print(f"[Evaluate] Option 1 (FULL_RAM) failed with error: {e}")
+            print("[Evaluate] Stepping down to Option 2 (CHUNKED_RAM)...")
+            strategy = "CHUNKED_RAM"
+
+    # Tier 2: CHUNKED_RAM (Fallback if FULL_RAM is unavailable or fails)
+    if strategy == "CHUNKED_RAM":
+        print("\n[Evaluate] Strategy Selected: Option 2 (CHUNKED_RAM - Available RAM < Full Dataset)")
+        print("[Evaluate] Evaluating in 1,000,000-sample in-memory chunks (~8.70 GB RAM per chunk)...")
+        chunk_size = 1000000
+        all_outputs = []
+        all_labels = []
+        try:
+            num_chunks = int(np.ceil(eval_samples / chunk_size))
+            for chunk_idx in range(num_chunks):
+                c_start = chunk_idx * chunk_size
+                c_end = min((chunk_idx + 1) * chunk_size, eval_samples)
+                c_indices = np.arange(c_start, c_end)
+                print(f"[Evaluate] [Chunk {chunk_idx + 1}/{num_chunks}] Pre-loading samples {c_start:,} to {c_end:,} into RAM...")
+                chunk_gen = JetFormerDataGenerator(
+                    h5_path=test_h5_path,
+                    stats_dir=base_path,
+                    batch_size=batch_size,
+                    shuffle=False,
+                    indices=c_indices,
+                    num_feats=num_feats,
+                    in_memory=True,
+                )
+                c_out = model.predict(chunk_gen)
+                c_labels = np.concatenate([y for _, y in chunk_gen], axis=0)
+                all_outputs.append(c_out)
+                all_labels.append(c_labels)
+                del chunk_gen, c_out, c_labels
+                gc.collect()
+            outputs = np.concatenate(all_outputs, axis=0)
+            labels = np.concatenate(all_labels, axis=0)
+        except (MemoryError, Exception) as e:
+            print(f"[Evaluate] Option 2 (CHUNKED_RAM) failed with error: {e}")
+            print("[Evaluate] Stepping down to Option 3 (SEQUENTIAL_DISK_STREAM)...")
+            strategy = "SEQUENTIAL_DISK_STREAM"
+
+    # Tier 3: SEQUENTIAL_DISK_STREAM (Final Fallback if Tiers 1 & 2 fail)
+    if strategy == "SEQUENTIAL_DISK_STREAM" or outputs is None:
+        print("\n[Evaluate] Strategy Selected: Option 3 (SEQUENTIAL_DISK_STREAM)")
+        print("[Evaluate] WARNING: Options 1 & 2 unavailable or failed. Streaming batch-by-batch from HDF5 disk...")
+        test_gen = JetFormerDataGenerator(
+            h5_path=test_h5_path,
+            stats_dir=base_path,
+            batch_size=batch_size,
+            shuffle=False,
+            indices=test_indices,
+            num_feats=num_feats,
+            in_memory=False,
+        )
+        outputs = model.predict(test_gen)
+        labels = np.concatenate([y for _, y in test_gen], axis=0)
+
     test_acc, test_class_accs, test_aucs = evaluate(outputs, labels, classes)
 
     metadata = extract_model_metadata(model, best_ebops=None, best_epoch=None, num_test_samples=len(labels))
@@ -144,7 +226,7 @@ if __name__ == "__main__":
         "--max_test_samples",
         type=int,
         default=2000000,
-        help="Maximum test samples for evaluation (default: 2,000,000)",
+        help="Maximum test samples for evaluation (0 for uncapped full dataset)",
     )
     parser.add_argument(
         "--dataset", type=str, default="jetclass", help="Dataset name (jetclass or hls4ml)"
