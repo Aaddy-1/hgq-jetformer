@@ -190,21 +190,18 @@ def setup_data_generators(
             y_all = f[y_key][:]
 
             if max_samples is not None and max_samples < total_train_samples:
-                rng = np.random.default_rng(42)
                 unique_classes = np.unique(y_all)
                 quota = max_samples // len(unique_classes)
                 sample_bytes = num_particles * num_feats * 4
                 ram_gb = (max_samples * sample_bytes) / (1024 ** 3)
-                print(f"[Dataset] Pre-loading {quota:,} samples per class directly from HDF5 ({max_samples:,} total = {ram_gb:.2f} GB RAM)...")
+                print(f"[Dataset] Fast 10-block slice pre-loading: {quota:,} contiguous samples/class ({max_samples:,} total = {ram_gb:.2f} GB RAM)...")
 
                 x_chunks, y_chunks = [], []
                 for cls in unique_classes:
                     cls_indices = np.where(y_all == cls)[0]
-                    selected = rng.choice(cls_indices, size=quota, replace=False)
-                    selected.sort()
-
-                    x_chunks.append(f[x_key][selected])
-                    y_chunks.append(f[y_key][selected])
+                    start_i = cls_indices[0]
+                    x_chunks.append(f[x_key][start_i : start_i + quota])
+                    y_chunks.append(f[y_key][start_i : start_i + quota])
 
                 shared_x = np.concatenate(x_chunks, axis=0)
                 shared_y = np.concatenate(y_chunks, axis=0)
