@@ -185,44 +185,48 @@ def setup_data_generators(
                 y_key = "jets" if "jets" in f else ("label" if "label" in f else list(f.keys())[1])
             total_train_samples += f[x_key].shape[0]
 
-    if max_samples is not None and max_samples < total_train_samples:
-        print(f"[Dataset] Capping total samples from {total_train_samples:,} to {max_samples:,}")
-        # Load 1D label vector across training shard(s) for exact stratified sampling
-        y_list = []
-        for p in train_h5_paths:
-            with h5py.File(p, "r") as f:
-                y_list.append(f[y_key][:])
-        y_all = np.concatenate(y_list, axis=0) if len(y_list) > 1 else y_list[0]
-        indices = get_stratified_indices(y_all, max_samples, seed=42)
-        del y_list, y_all
-    else:
-        indices = np.arange(total_train_samples)
-        np.random.shuffle(indices)  # Shuffle for random train/val split
-
-    val_size = int(len(indices) * val_ratio)
-    val_indices = indices[:val_size]
-    train_indices = indices[val_size:]
-
     if in_memory:
-        # Shared single-read: load the contiguous slice once, share between train/val
-        max_needed = int(np.max(indices)) + 1
-        print(f"[Dataset] Loading {max_needed} contiguous samples from disk (single read)...")
-        x_list = []
-        y_list = []
-        loaded_so_far = 0
-        for p in train_h5_paths:
-            with h5py.File(p, "r") as f:
-                file_len = f[x_key].shape[0]
-                if max_needed <= loaded_so_far:
-                    break
-                slice_end = min(file_len, max_needed - loaded_so_far)
-                x_list.append(f[x_key][:slice_end])
-                y_list.append(f[y_key][:slice_end])
-                loaded_so_far += slice_end
+        with h5py.File(train_h5_paths[0], "r") as f:
+            y_all = f[y_key][:]
 
-        shared_x = np.concatenate(x_list, axis=0) if len(x_list) > 1 else x_list[0]
-        shared_y = np.concatenate(y_list, axis=0) if len(y_list) > 1 else y_list[0]
-        print(f"[Dataset] Shared data loaded. Splitting train ({len(train_indices)}) / val ({len(val_indices)})...")
+            if max_samples is not None and max_samples < total_train_samples:
+                rng = np.random.default_rng(42)
+                unique_classes = np.unique(y_all)
+                quota = max_samples // len(unique_classes)
+                sample_bytes = num_particles * num_feats * 4
+                ram_gb = (max_samples * sample_bytes) / (1024 ** 3)
+                print(f"[Dataset] Pre-loading {quota:,} samples per class directly from HDF5 ({max_samples:,} total = {ram_gb:.2f} GB RAM)...")
+
+                x_chunks, y_chunks = [], []
+                for cls in unique_classes:
+                    cls_indices = np.where(y_all == cls)[0]
+                    selected = rng.choice(cls_indices, size=quota, replace=False)
+                    selected.sort()
+
+                    x_chunks.append(f[x_key][selected])
+                    y_chunks.append(f[y_key][selected])
+
+                shared_x = np.concatenate(x_chunks, axis=0)
+                shared_y = np.concatenate(y_chunks, axis=0)
+                del x_chunks, y_chunks, y_all
+            else:
+                sample_bytes = num_particles * num_feats * 4
+                ram_gb = (total_train_samples * sample_bytes) / (1024 ** 3)
+                print(f"[Dataset] Pre-loading full dataset into RAM ({total_train_samples:,} samples = {ram_gb:.2f} GB RAM)...")
+                shared_x = f[x_key][:]
+                shared_y = y_all
+                del y_all
+
+        perm = np.random.default_rng(42).permutation(len(shared_y))
+        shared_x = shared_x[perm]
+        shared_y = shared_y[perm]
+
+        val_size = int(len(shared_y) * val_ratio)
+        train_x, val_x = shared_x[val_size:], shared_x[:val_size]
+        train_y, val_y = shared_y[val_size:], shared_y[:val_size]
+        del shared_x, shared_y
+
+        print(f"[Dataset] Pre-load complete. Splitting train ({len(train_y):,}) / val ({len(val_y):,})...")
 
         train_gen = JetFormerDataGenerator(
             h5_path=train_h5_paths,
@@ -230,7 +234,7 @@ def setup_data_generators(
             batch_size=batch_size,
             shuffle=True,
             num_feats=num_feats,
-            preloaded_data=(shared_x[train_indices], shared_y[train_indices]),
+            preloaded_data=(train_x, train_y),
         )
         val_gen = JetFormerDataGenerator(
             h5_path=train_h5_paths,
@@ -238,10 +242,8 @@ def setup_data_generators(
             batch_size=batch_size,
             shuffle=False,
             num_feats=num_feats,
-            preloaded_data=(shared_x[val_indices], shared_y[val_indices]),
+            preloaded_data=(val_x, val_y),
         )
-        # Free the shared arrays after splitting
-        del shared_x, shared_y
     else:
         train_gen = JetFormerDataGenerator(
             h5_path=train_h5_paths,
