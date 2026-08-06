@@ -76,27 +76,36 @@ def run_standalone_evaluation(
 
     import h5py
 
+    preloaded = None
     with h5py.File(test_h5_path, "r") as f:
         key = "jetConstituentList" if "jetConstituentList" in f else ("particle_features" if "particle_features" in f else list(f.keys())[0])
         y_key = "jets" if "jets" in f else ("label" if "label" in f else list(f.keys())[1])
         total_test_samples = f[key].shape[0]
-        y_test_all = f[y_key][:]
 
-    if max_test_samples is not None and max_test_samples > 0 and max_test_samples < total_test_samples:
-        eval_samples = max_test_samples
-        print(f"[Evaluate] Fast 10-block slice sampling for {eval_samples:,} test samples across all 10 classes...")
-        unique_classes = np.unique(y_test_all)
-        quota = eval_samples // len(unique_classes)
-        idx_chunks = []
-        for cls in unique_classes:
-            cls_indices = np.where(y_test_all == cls)[0]
-            start_i = cls_indices[0]
-            idx_chunks.append(np.arange(start_i, start_i + quota))
-        test_indices = np.concatenate(idx_chunks)
-    else:
-        eval_samples = total_test_samples
-        test_indices = np.arange(total_test_samples)
-    del y_test_all
+        if max_test_samples is not None and max_test_samples > 0 and max_test_samples < total_test_samples:
+            eval_samples = max_test_samples
+            print(f"[Evaluate] Fast 10-block slice sampling for {eval_samples:,} test samples across all 10 classes...")
+            y_test_all = f[y_key][:]
+            unique_classes = np.unique(y_test_all)
+            quota = eval_samples // len(unique_classes)
+            x_chunks, y_chunks = [], []
+            idx_chunks = []
+            for cls in unique_classes:
+                cls_indices = np.where(y_test_all == cls)[0]
+                start_i = cls_indices[0]
+                x_chunks.append(f[key][start_i : start_i + quota])
+                y_chunks.append(f[y_key][start_i : start_i + quota])
+                idx_chunks.append(np.arange(start_i, start_i + quota))
+            shared_x = np.concatenate(x_chunks, axis=0)
+            shared_y = np.concatenate(y_chunks, axis=0)
+            preloaded = (shared_x, shared_y)
+            test_indices = np.concatenate(idx_chunks)
+            del y_test_all
+        else:
+            eval_samples = total_test_samples
+            test_indices = np.arange(total_test_samples)
+            if in_memory:
+                preloaded = (f[key][:], f[y_key][:])
 
     if quantize:
         print("\n[HGQ] Initiating activation profiling for WRAP mode calibration...")
@@ -143,9 +152,10 @@ def run_standalone_evaluation(
                 stats_dir=base_path,
                 batch_size=batch_size,
                 shuffle=False,
-                indices=test_indices,
+                indices=test_indices if preloaded is None else None,
                 num_feats=num_feats,
                 in_memory=True,
+                preloaded_data=preloaded,
             )
             outputs = model.predict(test_gen)
             labels = np.concatenate([y for _, y in test_gen], axis=0)
