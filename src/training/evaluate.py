@@ -82,30 +82,51 @@ def run_standalone_evaluation(
         y_key = "jets" if "jets" in f else ("label" if "label" in f else list(f.keys())[1])
         total_test_samples = f[key].shape[0]
 
-        if max_test_samples is not None and max_test_samples > 0 and max_test_samples < total_test_samples:
-            eval_samples = max_test_samples
-            print(f"[Evaluate] Fast 10-block slice sampling for {eval_samples:,} test samples across all 10 classes...")
-            y_test_all = f[y_key][:]
-            unique_classes = np.unique(y_test_all)
-            quota = eval_samples // len(unique_classes)
-            x_chunks, y_chunks = [], []
-            idx_chunks = []
-            for cls in unique_classes:
-                cls_indices = np.where(y_test_all == cls)[0]
-                start_i = cls_indices[0]
-                x_chunks.append(f[key][start_i : start_i + quota])
-                y_chunks.append(f[y_key][start_i : start_i + quota])
-                idx_chunks.append(np.arange(start_i, start_i + quota))
-            shared_x = np.concatenate(x_chunks, axis=0)
-            shared_y = np.concatenate(y_chunks, axis=0)
-            preloaded = (shared_x, shared_y)
-            test_indices = np.concatenate(idx_chunks)
-            del y_test_all
+    eval_samples = max_test_samples if (max_test_samples is not None and max_test_samples > 0 and max_test_samples < total_test_samples) else total_test_samples
+
+    # 1. Hardware Detection BEFORE any data preloading
+    if in_memory:
+        if eval_samples > 5000000:
+            print(f"\n[Evaluate] Large sample count detected ({eval_samples:,} > 5,000,000).")
+            print("[Evaluate] Automatically selecting Option 2 (CHUNKED_RAM) for 100% OOM safety.")
+            strategy = "CHUNKED_RAM"
         else:
-            eval_samples = total_test_samples
-            test_indices = np.arange(total_test_samples)
-            if in_memory:
+            strategy = detect_hardware_and_strategy(
+                num_samples=eval_samples,
+                num_particles=num_particles,
+                num_feats=num_feats,
+                ram_safety_ratio=0.50,
+            )
+    else:
+        strategy = "SEQUENTIAL_DISK_STREAM"
+
+    preloaded = None
+    test_indices = None
+
+    # 2. Pre-load into RAM ONLY if FULL_RAM is selected
+    if strategy == "FULL_RAM":
+        with h5py.File(test_h5_path, "r") as f:
+            if eval_samples < total_test_samples:
+                print(f"[Evaluate] Fast 10-block slice sampling for {eval_samples:,} test samples across all 10 classes...")
+                y_test_all = f[y_key][:]
+                unique_classes = np.unique(y_test_all)
+                quota = eval_samples // len(unique_classes)
+                x_chunks, y_chunks = [], []
+                idx_chunks = []
+                for cls in unique_classes:
+                    cls_indices = np.where(y_test_all == cls)[0]
+                    start_i = cls_indices[0]
+                    x_chunks.append(f[key][start_i : start_i + quota])
+                    y_chunks.append(f[y_key][start_i : start_i + quota])
+                    idx_chunks.append(np.arange(start_i, start_i + quota))
+                shared_x = np.concatenate(x_chunks, axis=0)
+                shared_y = np.concatenate(y_chunks, axis=0)
+                preloaded = (shared_x, shared_y)
+                test_indices = np.concatenate(idx_chunks)
+                del y_test_all
+            else:
                 preloaded = (f[key][:], f[y_key][:])
+                test_indices = np.arange(total_test_samples)
 
     if quantize:
         print("\n[HGQ] Initiating activation profiling for WRAP mode calibration...")
@@ -123,22 +144,6 @@ def run_standalone_evaluation(
         print("[HGQ] Profiling complete. Integer boundaries calibrated.")
 
     print(f"\nExecuting Inference on Test Set ({eval_samples:,} samples)...")
-
-    # Determine initial strategy via hardware detection
-    if in_memory:
-        if eval_samples > 5000000:
-            print(f"\n[Evaluate] Large sample count detected ({eval_samples:,} > 5,000,000).")
-            print("[Evaluate] Automatically selecting Option 2 (CHUNKED_RAM) for 100% OOM safety.")
-            strategy = "CHUNKED_RAM"
-        else:
-            strategy = detect_hardware_and_strategy(
-                num_samples=eval_samples,
-                num_particles=num_particles,
-                num_feats=num_feats,
-                ram_safety_ratio=0.50,
-            )
-    else:
-        strategy = "SEQUENTIAL_DISK_STREAM"
 
     outputs = None
     labels = None
@@ -173,26 +178,28 @@ def run_standalone_evaluation(
         all_labels = []
         try:
             num_chunks = int(np.ceil(eval_samples / chunk_size))
-            for chunk_idx in range(num_chunks):
-                c_start = chunk_idx * chunk_size
-                c_end = min((chunk_idx + 1) * chunk_size, eval_samples)
-                c_indices = np.arange(c_start, c_end)
-                print(f"[Evaluate] [Chunk {chunk_idx + 1}/{num_chunks}] Pre-loading samples {c_start:,} to {c_end:,} into RAM...")
-                chunk_gen = JetFormerDataGenerator(
-                    h5_path=test_h5_path,
-                    stats_dir=base_path,
-                    batch_size=batch_size,
-                    shuffle=False,
-                    indices=c_indices,
-                    num_feats=num_feats,
-                    in_memory=True,
-                )
-                c_out = model.predict(chunk_gen)
-                c_labels = np.concatenate([y for _, y in chunk_gen], axis=0)
-                all_outputs.append(c_out)
-                all_labels.append(c_labels)
-                del chunk_gen, c_out, c_labels
-                gc.collect()
+            with h5py.File(test_h5_path, "r") as f:
+                for chunk_idx in range(num_chunks):
+                    c_start = chunk_idx * chunk_size
+                    c_end = min((chunk_idx + 1) * chunk_size, eval_samples)
+                    print(f"[Evaluate] [Chunk {chunk_idx + 1}/{num_chunks}] Slicing samples {c_start:,} to {c_end:,} into RAM...")
+                    c_x = f[key][c_start:c_end]
+                    c_y = f[y_key][c_start:c_end]
+                    chunk_gen = JetFormerDataGenerator(
+                        h5_path=test_h5_path,
+                        stats_dir=base_path,
+                        batch_size=batch_size,
+                        shuffle=False,
+                        num_feats=num_feats,
+                        in_memory=True,
+                        preloaded_data=(c_x, c_y),
+                    )
+                    c_out = model.predict(chunk_gen)
+                    c_labels = np.concatenate([y for _, y in chunk_gen], axis=0)
+                    all_outputs.append(c_out)
+                    all_labels.append(c_labels)
+                    del c_x, c_y, chunk_gen, c_out, c_labels
+                    gc.collect()
             outputs = np.concatenate(all_outputs, axis=0)
             labels = np.concatenate(all_labels, axis=0)
         except (MemoryError, Exception) as e:
