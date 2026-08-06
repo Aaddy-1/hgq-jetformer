@@ -523,6 +523,8 @@ def train(
     num_transformers: int = 1,
     embbed_dim: int = 32,
     num_heads: int = 2,
+    use_cls_token: bool = False,
+    use_linformer: bool = True,
     activation: str = "ReLU",
     normalization: str = "Batch",
     batch_size: int = 256,
@@ -607,6 +609,8 @@ def train(
             "num_heads": num_heads,
             "num_classes": len(classes),
             "num_transformers": num_transformers,
+            "use_cls_token": use_cls_token,
+            "use_linformer": use_linformer,
             "dropout": dropout,
             "num_particles": num_particles,
             "activation": activation,
@@ -632,7 +636,8 @@ def train(
             activation=activation,
             normalization=normalization,
             quantize=quantize,
-            use_linformer=True,
+            use_linformer=use_linformer,
+            use_cls_token=use_cls_token,
         )
 
         print("=================MODEL SUMMARY=================")
@@ -734,6 +739,36 @@ if __name__ == "__main__":
         help="Pre-load dataset into RAM for ultra-fast training (default: True for max_samples <= 5M or single part)",
     )
     parser.add_argument(
+        "--num_transformers",
+        type=int,
+        default=1,
+        help="Number of Transformer blocks (default: 1, set 3 for legacy JetFormer)",
+    )
+    parser.add_argument(
+        "--embed_dim",
+        type=int,
+        default=32,
+        help="Embedding and hidden dimension (default: 32)",
+    )
+    parser.add_argument(
+        "--num_heads",
+        type=int,
+        default=2,
+        help="Number of attention heads (default: 2)",
+    )
+    parser.add_argument(
+        "--use_cls_token",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Use CLS token injection and extraction (default: False)",
+    )
+    parser.add_argument(
+        "--use_linformer",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Use QLinformerAttention instead of standard QMultiHeadAttention (default: True)",
+    )
+    parser.add_argument(
         "--max_test_samples",
         type=int,
         default=2000000,
@@ -767,8 +802,11 @@ if __name__ == "__main__":
         num_feats=num_feats,
         num_epochs=args.num_epochs,
         batch_size=args.batch_size,
-        num_transformers=1,
-        embbed_dim=32,
+        num_transformers=args.num_transformers,
+        embbed_dim=args.embed_dim,
+        num_heads=args.num_heads,
+        use_cls_token=args.use_cls_token,
+        use_linformer=args.use_linformer,
         early_stopping_patience=150,
         dropout=args.dropout,
         val_ratio=0.1,
