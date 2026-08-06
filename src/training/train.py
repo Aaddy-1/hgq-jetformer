@@ -137,6 +137,7 @@ def setup_data_generators(
     max_samples=None,
     in_memory=False,
     max_test_samples=2000000,
+    augment_rotation=False,
 ):
     if dataset == "jetclass":
         base_path = os.path.join(PROCESSED_DIR, "jetclass", str(num_particles), f"{num_feats}f")
@@ -166,6 +167,8 @@ def setup_data_generators(
     print("BASE PATH:", base_path)
     print("================================")
     print("TRAIN H5 PATHS:", train_h5_paths)
+    if augment_rotation:
+        print("[Dataset] Training augmentation enabled: Dynamic SO(2) rotation in (deta, dphi) plane")
 
     import h5py
 
@@ -232,6 +235,7 @@ def setup_data_generators(
             shuffle=True,
             num_feats=num_feats,
             preloaded_data=(train_x, train_y),
+            augment_rotation=augment_rotation,
         )
         val_gen = JetFormerDataGenerator(
             h5_path=train_h5_paths,
@@ -240,6 +244,7 @@ def setup_data_generators(
             shuffle=False,
             num_feats=num_feats,
             preloaded_data=(val_x, val_y),
+            augment_rotation=False,
         )
     else:
         train_gen = JetFormerDataGenerator(
@@ -250,6 +255,7 @@ def setup_data_generators(
             indices=train_indices,
             num_feats=num_feats,
             in_memory=False,
+            augment_rotation=augment_rotation,
         )
         val_gen = JetFormerDataGenerator(
             h5_path=train_h5_paths,
@@ -259,6 +265,7 @@ def setup_data_generators(
             indices=val_indices,
             num_feats=num_feats,
             in_memory=False,
+            augment_rotation=False,
         )
 
     # test_gen ALWAYS streams sequentially from disk (never pre-loaded)
@@ -527,6 +534,7 @@ def train(
     max_samples: int = None,
     in_memory: bool = False,
     max_test_samples: int = 2000000,
+    augment_rotation: bool = False,
 ):
     # Resolve class registry based on dataset
     classes = JETCLASS_CLASSES if dataset == "jetclass" else HLS4ML_CLASSES
@@ -540,6 +548,7 @@ def train(
         max_samples=max_samples,
         in_memory=in_memory,
         max_test_samples=max_test_samples,
+        augment_rotation=augment_rotation,
     )
 
     current_model_dir, current_output_dir = resolve_experiment_paths(
@@ -761,6 +770,12 @@ if __name__ == "__main__":
         default=2000000,
         help="Maximum test set samples for evaluation (default: 2,000,000)",
     )
+    parser.add_argument(
+        "--augment_rotation",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Enable dynamic on-the-fly SO(2) rotation data augmentation in (deta, dphi) plane",
+    )
     args = parser.parse_args()
 
     # Resolve dataset-specific defaults
@@ -804,4 +819,5 @@ if __name__ == "__main__":
         max_samples=args.max_samples,
         in_memory=in_memory,
         max_test_samples=args.max_test_samples,
+        augment_rotation=args.augment_rotation,
     )

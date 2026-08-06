@@ -81,11 +81,42 @@ def get_stratified_indices(y_labels: np.ndarray, max_samples: int, seed: int = 4
     return result
 
 
+def apply_so2_rotation(x_batch, num_feats=None):
+    """
+    Applies random SO(2) rotation in the (deta, dphi) plane for each jet in a batch.
+    x_batch shape: (B, N, C)
+    """
+    num_c = x_batch.shape[-1]
+    if num_c == 3:
+        deta_idx, dphi_idx = 1, 2
+    elif num_c == 16:
+        deta_idx, dphi_idx = 8, 11
+    else:
+        deta_idx, dphi_idx = 15, 16
+
+    batch_size = x_batch.shape[0]
+    angles = np.random.uniform(0.0, 2.0 * np.pi, size=(batch_size, 1, 1)).astype(x_batch.dtype)
+    cos_a = np.cos(angles)
+    sin_a = np.sin(angles)
+
+    deta = x_batch[:, :, deta_idx : deta_idx + 1]
+    dphi = x_batch[:, :, dphi_idx : dphi_idx + 1]
+
+    deta_rot = deta * cos_a - dphi * sin_a
+    dphi_rot = deta * sin_a + dphi * cos_a
+
+    x_rot = x_batch.copy()
+    x_rot[:, :, deta_idx : deta_idx + 1] = deta_rot
+    x_rot[:, :, dphi_idx : dphi_idx + 1] = dphi_rot
+
+    return x_rot
+
+
 class JetFormerDataGenerator(keras.utils.PyDataset):
     """
     Keras 3 PyDataset for batched HDF5 streaming and high-performance RAM caching.
     Handles in-memory RAM caching, contiguous block HDF5 streaming, dynamic shuffling,
-    and on-the-fly normalization using offline Welford statistics.
+    on-the-fly SO(2) rotation data augmentation, and Welford normalization.
     """
 
     def __init__(
@@ -100,6 +131,7 @@ class JetFormerDataGenerator(keras.utils.PyDataset):
         num_feats=None,
         in_memory=False,
         preloaded_data=None,
+        augment_rotation=False,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -112,6 +144,7 @@ class JetFormerDataGenerator(keras.utils.PyDataset):
         self.shuffle = shuffle
         self.num_feats = num_feats
         self.in_memory = in_memory
+        self.augment_rotation = augment_rotation
 
         self.mean = np.load(os.path.join(stats_dir, "mean.npy"))
         self.std = np.load(os.path.join(stats_dir, "std.npy"))
@@ -122,6 +155,7 @@ class JetFormerDataGenerator(keras.utils.PyDataset):
 
         self.x_data = None
         self.y_data = None
+        self.x_raw = None
 
         if preloaded_data is not None:
             # Use pre-loaded numpy arrays directly (shared single-read path)
@@ -170,14 +204,19 @@ class JetFormerDataGenerator(keras.utils.PyDataset):
         if self.num_feats is not None and self.num_feats < raw_x.shape[-1]:
             raw_x = raw_x[:, :, : self.num_feats]
 
+        if self.augment_rotation:
+            self.x_raw = raw_x.astype(np.float32)
+        else:
+            self.x_raw = None
+
         # Z-score normalization
-        raw_x = (raw_x - self.mean) / (self.std + 1e-8)
+        norm_x = (raw_x - self.mean) / (self.std + 1e-8)
 
         # Convert one-hot to sparse categorical indices
         if raw_y.ndim > 1 and raw_y.shape[-1] > 1:
             raw_y = np.argmax(raw_y, axis=-1)
 
-        self.x_data = raw_x.astype(np.float32)
+        self.x_data = norm_x.astype(np.float32)
         self.y_data = raw_y.astype(np.int64)
         self.in_memory = True
         self.indices = np.arange(len(self.x_data))
@@ -213,12 +252,17 @@ class JetFormerDataGenerator(keras.utils.PyDataset):
         if self.num_feats is not None and self.num_feats < all_x.shape[-1]:
             all_x = all_x[:, :, : self.num_feats]
 
-        all_x = (all_x - self.mean) / (self.std + 1e-8)
+        if self.augment_rotation:
+            self.x_raw = all_x.astype(np.float32)
+        else:
+            self.x_raw = None
+
+        norm_x = (all_x - self.mean) / (self.std + 1e-8)
 
         if all_y.ndim > 1 and all_y.shape[-1] > 1:
             all_y = np.argmax(all_y, axis=-1)
 
-        self.x_data = all_x.astype(np.float32)
+        self.x_data = norm_x.astype(np.float32)
         self.y_data = all_y.astype(np.int64)
         self.indices = np.arange(len(self.x_data))
         self.length = len(self.x_data)
@@ -239,7 +283,12 @@ class JetFormerDataGenerator(keras.utils.PyDataset):
             start_idx = idx * self.batch_size
             end_idx = min((idx + 1) * self.batch_size, self.length)
             batch_indices = self.indices[start_idx:end_idx]
-            return self.x_data[batch_indices], self.y_data[batch_indices]
+            if self.augment_rotation and hasattr(self, "x_raw") and self.x_raw is not None:
+                x_b = apply_so2_rotation(self.x_raw[batch_indices], self.num_feats)
+                x_b = (x_b - self.mean) / (self.std + 1e-8)
+                return x_b.astype(np.float32), self.y_data[batch_indices]
+            else:
+                return self.x_data[batch_indices], self.y_data[batch_indices]
 
         # Low-RAM Contiguous Block Disk Streaming (< 10 MB RAM)
         b_idx = self.block_order[idx]
@@ -303,6 +352,9 @@ class JetFormerDataGenerator(keras.utils.PyDataset):
 
         if self.num_feats is not None and self.num_feats < x_batch.shape[-1]:
             x_batch = x_batch[:, :, : self.num_feats]
+
+        if self.augment_rotation:
+            x_batch = apply_so2_rotation(x_batch, self.num_feats)
 
         x_batch = (x_batch - self.mean) / (self.std + 1e-8)
 
