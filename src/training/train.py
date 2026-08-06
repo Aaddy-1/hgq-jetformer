@@ -478,39 +478,26 @@ def run_post_training_pipeline(
 ):
     if classes is None:
         classes = HLS4ML_CLASSES
-    # Best weights are already restored by EarlyStoppingWithEbopsThres
-    # (restore_best_weights=True) or keras.callbacks.EarlyStopping.
 
     if save and model_path:
         model.save(model_path)
         print(f"\n[Check] Saved best model checkpoint to: {model_path}")
 
-    if quantize:
-        print("\n[HGQ] Initiating activation profiling for WRAP mode calibration...")
-        it = iter(train_gen)
-        x_calib = np.concatenate([next(it)[0] for _ in range(10)], axis=0)
-        trace_minmax(model, x_calib)
-        print("[HGQ] Profiling complete. Integer boundaries calibrated.")
+    # Invoke standalone evaluation pipeline from evaluate.py
+    from src.training.evaluate import run_standalone_evaluation
 
-    print(f"\nExecuting Final Inference on Test Set ({len(test_gen.indices):,} samples)...")
-    outputs = model.predict(test_gen)
-    labels = np.concatenate([y for _, y in test_gen], axis=0)
-    test_acc, test_class_accs, test_aucs = evaluate(outputs, labels, classes)
-
-    if save and eval_results_path:
-        metadata = extract_model_metadata(
-            model, best_ebops, best_epoch, num_test_samples=len(labels)
-        )
-        save_final_evaluation(
-            test_acc,
-            test_class_accs,
-            test_aucs,
-            classes,
-            metadata,
-            config,
-            eval_results_path,
-        )
-        print(f"Final metrics and metadata saved to: {eval_results_path}")
+    print("\n[Post-Training] Transitioning to standalone evaluation pipeline (evaluate.py)...")
+    run_standalone_evaluation(
+        num_particles=config.get("num_particles", 128),
+        num_feats=config.get("in_dim", 17),
+        batch_size=config.get("batch_size", 256),
+        max_test_samples=config.get("max_test_samples", 2000000),
+        experiment=config.get("experiment"),
+        quantize=quantize,
+        dataset=config.get("dataset", "jetclass"),
+        model_path=model_path,
+        in_memory=True,
+    )
 
 
 def train(
