@@ -278,7 +278,7 @@ def setup_data_generators(
         shuffle=False,
         indices=test_indices,
         num_feats=num_feats,
-        in_memory=in_memory,
+        in_memory=False,
     )
     return train_gen, val_gen, test_gen
 
