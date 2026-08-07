@@ -132,6 +132,7 @@ class JetFormerDataGenerator(keras.utils.PyDataset):
         in_memory=False,
         preloaded_data=None,
         augment_rotation=False,
+        seed=None,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -145,6 +146,7 @@ class JetFormerDataGenerator(keras.utils.PyDataset):
         self.num_feats = num_feats
         self.in_memory = in_memory
         self.augment_rotation = augment_rotation
+        self.rng = np.random.default_rng(seed)
 
         self.mean = np.load(os.path.join(stats_dir, "mean.npy"))
         self.std = np.load(os.path.join(stats_dir, "std.npy"))
@@ -222,7 +224,7 @@ class JetFormerDataGenerator(keras.utils.PyDataset):
         self.indices = np.arange(len(self.x_data))
         self.length = len(self.x_data)
         if self.shuffle:
-            np.random.shuffle(self.indices)
+            self.rng.shuffle(self.indices)
         print(f"[JetFormerDataGenerator] Preloaded data ready. Shape: {self.x_data.shape}")
 
     def _preload_into_ram(self):
@@ -267,7 +269,7 @@ class JetFormerDataGenerator(keras.utils.PyDataset):
         self.indices = np.arange(len(self.x_data))
         self.length = len(self.x_data)
         if self.shuffle:
-            np.random.shuffle(self.indices)
+            self.rng.shuffle(self.indices)
         print(f"[JetFormerDataGenerator] Pre-load complete. Shape: {self.x_data.shape}")
 
     def _get_file(self, file_idx):
@@ -346,7 +348,7 @@ class JetFormerDataGenerator(keras.utils.PyDataset):
                 y_batch[pos] = y_sub
 
         if self.shuffle and len(x_batch) > 1:
-            perm = np.random.permutation(len(x_batch))
+            perm = self.rng.permutation(len(x_batch))
             x_batch = x_batch[perm]
             y_batch = y_batch[perm]
 
@@ -366,9 +368,9 @@ class JetFormerDataGenerator(keras.utils.PyDataset):
     def on_epoch_end(self):
         if self.shuffle:
             if self.in_memory:
-                np.random.shuffle(self.indices)
+                self.rng.shuffle(self.indices)
             elif hasattr(self, "block_order"):
-                np.random.shuffle(self.block_order)
+                self.rng.shuffle(self.block_order)
 
     def __del__(self):
         if hasattr(self, "_h5_files"):
