@@ -54,6 +54,18 @@ JETCLASS_CLASSES = [
 EBOPS_WARMUP_EPOCH = 75
 
 
+def set_global_seed(seed: int = 42):
+    """Sets random seeds across Python, NumPy, TensorFlow, and Keras for exact reproducibility."""
+    import random
+    import tensorflow as tf
+    os.environ["PYTHONHASHSEED"] = str(seed)
+    random.seed(seed)
+    np.random.seed(seed)
+    tf.random.set_seed(seed)
+    keras.utils.set_random_seed(seed)
+    print(f"[Seed] Global random seed set to {seed} (Python, NumPy, TensorFlow, Keras)")
+
+
 class EbopsCaptureCallback(keras.callbacks.Callback):
     """Captures the EBOPs and accuracy metadata of the best model and saves checkpoint.
 
@@ -137,6 +149,7 @@ def setup_data_generators(
     max_samples=None,
     in_memory=False,
     max_test_samples=2000000,
+    seed=42,
 ):
     if dataset == "jetclass":
         base_path = os.path.join(PROCESSED_DIR, "jetclass", str(num_particles), f"{num_feats}f")
@@ -214,7 +227,7 @@ def setup_data_generators(
                 shared_y = y_all
                 del y_all
 
-        perm = np.random.default_rng(42).permutation(len(shared_y))
+        perm = np.random.default_rng(seed).permutation(len(shared_y))
         shared_x = shared_x[perm]
         shared_y = shared_y[perm]
 
@@ -527,7 +540,11 @@ def train(
     max_samples: int = None,
     in_memory: bool = False,
     max_test_samples: int = 2000000,
+    seed: int = 42,
 ):
+    # Set global random seeds
+    set_global_seed(seed)
+
     # Resolve class registry based on dataset
     classes = JETCLASS_CLASSES if dataset == "jetclass" else HLS4ML_CLASSES
     train_gen, val_gen, test_gen = setup_data_generators(
@@ -540,6 +557,7 @@ def train(
         max_samples=max_samples,
         in_memory=in_memory,
         max_test_samples=max_test_samples,
+        seed=seed,
     )
 
     current_model_dir, current_output_dir = resolve_experiment_paths(
@@ -761,7 +779,16 @@ if __name__ == "__main__":
         default=2000000,
         help="Maximum test set samples for evaluation (default: 2,000,000)",
     )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Random seed for weight initialization and dataset shuffling (default: 42)",
+    )
     args = parser.parse_args()
+
+    # Set global random seed immediately upon parsing arguments
+    set_global_seed(args.seed)
 
     # Resolve dataset-specific defaults
     if args.dataset == "jetclass":
@@ -804,4 +831,5 @@ if __name__ == "__main__":
         max_samples=args.max_samples,
         in_memory=in_memory,
         max_test_samples=args.max_test_samples,
+        seed=args.seed,
     )
