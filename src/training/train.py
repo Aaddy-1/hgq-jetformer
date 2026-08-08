@@ -517,6 +517,8 @@ def run_post_training_pipeline(
         dataset=config.get("dataset", "jetclass"),
         model_path=model_path,
         in_memory=True,
+        best_ebops=best_ebops,
+        best_epoch=best_epoch,
     )
 
 
@@ -633,6 +635,12 @@ def train(
             "num_epochs": num_epochs,
             "batch_size": batch_size,
             "early_stopping_patience": early_stopping_patience,
+            "experiment": experiment,
+            "dataset": dataset,
+            "max_samples": max_samples,
+            "max_test_samples": max_test_samples,
+            "augment_rotation": augment_rotation,
+            "seed": seed,
         }
 
         print("[DEBUG] Model Args: ")
