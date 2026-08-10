@@ -6,6 +6,7 @@ import argparse
 import numpy as np
 import h5py
 import keras
+import hgq
 from scipy.special import softmax
 from sklearn.metrics import accuracy_score, roc_auc_score
 
@@ -27,14 +28,24 @@ def load_and_pad_hls4ml_data(h5_path, max_samples=260000):
     """
     print(f"[Zero-Shot] Loading HLS4ML test data from: {h5_path}")
     with h5py.File(h5_path, "r") as f:
-        x_key = "jetConstituentList" if "jetConstituentList" in f else ("particle_features" if "particle_features" in f else list(f.keys())[0])
-        y_key = "jets" if "jets" in f else ("label" if "label" in f else list(f.keys())[1])
+        x_key = (
+            "jetConstituentList"
+            if "jetConstituentList" in f
+            else (
+                "particle_features" if "particle_features" in f else list(f.keys())[0]
+            )
+        )
+        y_key = (
+            "jets" if "jets" in f else ("label" if "label" in f else list(f.keys())[1])
+        )
 
         raw_x = f[x_key][:max_samples]  # Shape: (N, num_particles, num_feats)
         raw_y = f[y_key][:max_samples]  # Shape: (N, 5) or scalar labels
 
     n_samples, in_particles, in_feats = raw_x.shape
-    print(f"[Zero-Shot] Raw HLS4ML input shape: ({n_samples}, {in_particles}, {in_feats})")
+    print(
+        f"[Zero-Shot] Raw HLS4ML input shape: ({n_samples}, {in_particles}, {in_feats})"
+    )
 
     # Construct padded tensor for EXP-18: (N, 128, 17)
     padded_x = np.zeros((n_samples, 128, 17), dtype=np.float32)
@@ -45,14 +56,22 @@ def load_and_pad_hls4ml_data(h5_path, max_samples=260000):
     # 2. Map kinematic features
     if in_feats == 3:
         # pT, deta, dphi
-        padded_x[:, :effective_particles, 0] = raw_x[:, :effective_particles, 0]   # pT
-        padded_x[:, :effective_particles, 15] = raw_x[:, :effective_particles, 1]  # deta
-        padded_x[:, :effective_particles, 16] = raw_x[:, :effective_particles, 2]  # dphi
+        padded_x[:, :effective_particles, 0] = raw_x[:, :effective_particles, 0]  # pT
+        padded_x[:, :effective_particles, 15] = raw_x[
+            :, :effective_particles, 1
+        ]  # deta
+        padded_x[:, :effective_particles, 16] = raw_x[
+            :, :effective_particles, 2
+        ]  # dphi
     elif in_feats >= 16:
         mapped_feats = min(in_feats, 17)
-        padded_x[:, :effective_particles, :mapped_feats] = raw_x[:, :effective_particles, :mapped_feats]
+        padded_x[:, :effective_particles, :mapped_feats] = raw_x[
+            :, :effective_particles, :mapped_feats
+        ]
     else:
-        padded_x[:, :effective_particles, :in_feats] = raw_x[:, :effective_particles, :in_feats]
+        padded_x[:, :effective_particles, :in_feats] = raw_x[
+            :, :effective_particles, :in_feats
+        ]
 
     # Convert one-hot labels to integer class indices if necessary
     if raw_y.ndim > 1:
@@ -95,8 +114,10 @@ def evaluate_exp18_zeroshot(model_path, h5_path, max_samples=260000, output_json
     # Per-class metrics
     per_class = {}
     for i, class_name in enumerate(HLS4ML_CLASSES):
-        idx = (labels == i)
-        c_acc = float(accuracy_score(labels[idx], preds[idx])) if np.sum(idx) > 0 else 0.0
+        idx = labels == i
+        c_acc = (
+            float(accuracy_score(labels[idx], preds[idx])) if np.sum(idx) > 0 else 0.0
+        )
         try:
             one_hot_y = (labels == i).astype(int)
             c_auc = float(roc_auc_score(one_hot_y, probs[:, i]))
@@ -111,7 +132,9 @@ def evaluate_exp18_zeroshot(model_path, h5_path, max_samples=260000, output_json
     print(f"Overall Accuracy: {overall_acc * 100:.2f}%")
     print("-" * 55)
     for class_name, m in per_class.items():
-        print(f"  Class {class_name:<5}: Acc = {m['accuracy']*100:6.2f}%, AUC = {m['auc']:.4f}")
+        print(
+            f"  Class {class_name:<5}: Acc = {m['accuracy']*100:6.2f}%, AUC = {m['auc']:.4f}"
+        )
     print("=" * 55)
 
     results = {
@@ -132,7 +155,9 @@ def evaluate_exp18_zeroshot(model_path, h5_path, max_samples=260000, output_json
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Zero-Shot Evaluation of EXP-18 on HLS4ML Dataset")
+    parser = argparse.ArgumentParser(
+        description="Zero-Shot Evaluation of EXP-18 on HLS4ML Dataset"
+    )
     parser.add_argument(
         "--model_path",
         type=str,
@@ -154,14 +179,18 @@ if __name__ == "__main__":
     parser.add_argument(
         "--output_json",
         type=str,
-        default=os.path.join(PROJECT_ROOT, ".agents", "jet", "zeroshot_hls4ml_metrics.json"),
+        default=os.path.join(
+            PROJECT_ROOT, ".agents", "jet", "zeroshot_hls4ml_metrics.json"
+        ),
         help="Output path for JSON results",
     )
     args = parser.parse_args()
 
     model_p = args.model_path
     if not os.path.exists(model_p):
-        candidates = glob.glob(os.path.join(PROJECT_ROOT, "**", "128_17f.keras"), recursive=True)
+        candidates = glob.glob(
+            os.path.join(PROJECT_ROOT, "**", "128_17f.keras"), recursive=True
+        )
         if candidates:
             model_p = candidates[0]
             print(f"[Auto-Detect] Found model file at: {model_p}")
