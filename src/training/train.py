@@ -51,7 +51,7 @@ JETCLASS_CLASSES = [
 
 # Shared training constant: epoch after which EBOPs and val_loss
 # are expected to have stabilized under PID control.
-EBOPS_WARMUP_EPOCH = 75
+EBOPS_WARMUP_EPOCH = 20
 
 
 def set_global_seed(seed: int = 42):
