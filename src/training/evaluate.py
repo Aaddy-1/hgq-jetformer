@@ -165,7 +165,7 @@ def run_standalone_evaluation(
                 preloaded_data=preloaded,
             )
             outputs = model.predict(test_gen)
-            labels = np.concatenate([y for _, y in test_gen], axis=0)
+            labels = test_gen.y_data[test_gen.indices]
         except (MemoryError, Exception) as e:
             print(f"[Evaluate] Option 1 (FULL_RAM) failed with error: {e}")
             print("[Evaluate] Stepping down to Option 2 (CHUNKED_RAM)...")
@@ -197,7 +197,7 @@ def run_standalone_evaluation(
                         preloaded_data=(c_x, c_y),
                     )
                     c_out = model.predict(chunk_gen)
-                    c_labels = np.concatenate([y for _, y in chunk_gen], axis=0)
+                    c_labels = chunk_gen.y_data
                     all_outputs.append(c_out)
                     all_labels.append(c_labels)
                     del c_x, c_y, chunk_gen, c_out, c_labels
