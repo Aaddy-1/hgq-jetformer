@@ -418,26 +418,26 @@ def build_callbacks(
     callbacks = []
 
     if quantize:
-        # --- Quantized Training Callbacks (Reference-aligned) ---
+        # --- Quantized Training Callbacks (Aligned on val_acc) ---
         callbacks.append(
             EarlyStoppingWithEbopsThres(
                 ebops_threshold=450000,
-                monitor="val_loss",
+                monitor="val_sparse_categorical_accuracy",
                 patience=150,
-                mode="min",
-                restore_best_weights=True,
+                mode="max",
+                restore_best_weights=False,
                 start_from_epoch=EBOPS_WARMUP_EPOCH,
             )
         )
         callbacks.append(
             keras.callbacks.ReduceLROnPlateau(
-                monitor="val_loss",
-                mode="min",
+                monitor="val_sparse_categorical_accuracy",
+                mode="max",
                 factor=0.8,
                 patience=50,
                 min_lr=1e-5,
                 cooldown=200,
-                min_delta=0.05,
+                min_delta=1e-4,
             )
         )
         callbacks.append(
@@ -499,9 +499,6 @@ def run_post_training_pipeline(
     if classes is None:
         classes = HLS4ML_CLASSES
 
-    if save and model_path:
-        model.save(model_path)
-        print(f"\n[Check] Saved best model checkpoint to: {model_path}")
 
     # Invoke standalone evaluation pipeline from evaluate.py
     from src.training.evaluate import run_standalone_evaluation
