@@ -436,7 +436,7 @@ def build_callbacks(
                 factor=0.8,
                 patience=50,
                 min_lr=1e-5,
-                cooldown=200,
+                cooldown=20,
                 min_delta=1e-4,
             )
         )
