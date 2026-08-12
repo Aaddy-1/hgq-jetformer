@@ -29,6 +29,11 @@ from src.data.dataset import (
 )
 from src.model.jetformer import build_hgq_jetformer
 from src.training.onecyclelr import OneCycleLR, build_lr_schedule
+from src.training.callbacks import (
+    QATEarlyStoppingAndCheckpoint,
+    EbopsCaptureCallback,
+    AdaptiveReduceLROnPlateau,
+)
 
 # Path variables
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -59,7 +64,8 @@ JETCLASS_CLASSES = [
 
 # Shared training constant: epoch after which EBOPs and val_loss
 # are expected to have stabilized under PID control.
-EBOPS_WARMUP_EPOCH = 20
+EBOPS_WARMUP_EPOCH = 75
+
 
 
 def set_global_seed(seed: int = 42):
@@ -75,52 +81,7 @@ def set_global_seed(seed: int = 42):
     print(f"[Seed] Global random seed set to {seed} (Python, NumPy, TensorFlow, Keras)")
 
 
-class EbopsCaptureCallback(keras.callbacks.Callback):
-    """Captures the EBOPs and accuracy metadata of the best model and saves checkpoint.
 
-    Note: Saves model checkpoint directly to disk whenever a new best validation
-    accuracy is achieved with valid EBOPs (<= 450,000) after warmup.
-    """
-
-    def __init__(self, start_from_epoch=EBOPS_WARMUP_EPOCH, model_path=None):
-        super().__init__()
-        self.best_val_acc = -float("inf")
-        self.best_ebops = None
-        self.best_epoch = None
-        self.best_epochs = []
-        self.start_from_epoch = start_from_epoch
-        self.model_path = model_path
-
-    def _get_ebops(self):
-        ebops = 0.0
-        found = False
-        for layer in self.model.layers:
-            if hasattr(layer, "ebops"):
-                ebops += float(layer.ebops)
-                found = True
-        return ebops if found else None
-
-    def on_epoch_end(self, epoch, logs=None):
-        if epoch < self.start_from_epoch:
-            return
-
-        logs = logs or {}
-        val_acc = logs.get("val_sparse_categorical_accuracy")
-        ebops = self._get_ebops()
-
-        # Save checkpoint ONLY if EBOPs satisfy the 450k threshold constraint
-        if ebops is None or ebops <= 450000.0:
-            if val_acc is not None and val_acc > self.best_val_acc:
-                self.best_val_acc = val_acc
-                self.best_ebops = ebops
-                self.best_epoch = epoch
-                self.best_epochs.append(epoch)
-                if self.model_path:
-                    self.model.save(self.model_path)
-                    print(
-                        f"\n[Checkpoint] Saved new best EBOP-compliant model "
-                        f"(val_acc: {val_acc:.4f}, ebops: {ebops if ebops is not None else 0:.0f}) to {self.model_path}"
-                    )
 
 
 def extract_model_metadata(model, best_ebops, best_epoch, num_test_samples=None):
@@ -566,34 +527,53 @@ def resolve_experiment_paths(experiment: str, quantize: bool) -> tuple[str, str]
 
 
 def build_callbacks(
-    early_stopping_patience: int, quantize: bool, model_path: str = None
+    early_stopping_patience: int,
+    quantize: bool,
+    model_path: str = None,
+    use_adaptive_lr: bool = False,
 ):
     callbacks = []
 
     if quantize:
-        # --- Quantized Training Callbacks (Aligned on val_acc) ---
-        callbacks.append(
-            EarlyStoppingWithEbopsThres(
-                ebops_threshold=450000,
-                monitor="val_sparse_categorical_accuracy",
-                patience=early_stopping_patience,
-                min_delta=1e-4,
-                mode="max",
-                restore_best_weights=False,
-                start_from_epoch=EBOPS_WARMUP_EPOCH,
-            )
+        # --- Quantized Training Callbacks (Unified EarlyStopping & Checkpoint) ---
+        qat_cb = QATEarlyStoppingAndCheckpoint(
+            ebops_threshold=450000.0,
+            patience=early_stopping_patience,
+            min_delta=1e-3,
+            start_from_epoch=EBOPS_WARMUP_EPOCH,
+            model_path=model_path,
         )
-        callbacks.append(
-            keras.callbacks.ReduceLROnPlateau(
-                monitor="val_sparse_categorical_accuracy",
-                mode="max",
-                factor=0.8,
-                patience=50,
-                min_lr=1e-5,
-                cooldown=20,
-                min_delta=1e-4,
+        callbacks.append(qat_cb)
+
+        if use_adaptive_lr:
+            print(
+                "[Callbacks] Enabling dynamic noise-bounded AdaptiveReduceLROnPlateau"
             )
-        )
+            callbacks.append(
+                AdaptiveReduceLROnPlateau(
+                    factor=0.8,
+                    patience=40,
+                    cooldown=40,
+                    min_lr=1e-5,
+                    window=8,
+                    c_safety=1.25,
+                    min_delta_floor=1e-4,
+                    start_from_epoch=EBOPS_WARMUP_EPOCH,
+                )
+            )
+        else:
+            callbacks.append(
+                keras.callbacks.ReduceLROnPlateau(
+                    monitor="val_sparse_categorical_accuracy",
+                    mode="max",
+                    factor=0.8,
+                    patience=40,
+                    min_lr=1e-5,
+                    cooldown=40,
+                    min_delta=1e-4,
+                )
+            )
+
         callbacks.append(
             BetaPID(
                 p=1,
@@ -606,6 +586,7 @@ def build_callbacks(
                 damp_beta_on_target=0.5,
             )
         )
+        ebops_capture = qat_cb
     else:
         # --- Non-quantized Training Callbacks (Original) ---
         if early_stopping_patience > 0:
@@ -627,12 +608,11 @@ def build_callbacks(
                 min_lr=1e-4,
             )
         )
-
-    ebops_capture = EbopsCaptureCallback(
-        start_from_epoch=EBOPS_WARMUP_EPOCH if quantize else 0,
-        model_path=model_path,
-    )
-    callbacks.append(ebops_capture)
+        ebops_capture = EbopsCaptureCallback(
+            start_from_epoch=0,
+            model_path=model_path,
+        )
+        callbacks.append(ebops_capture)
 
     return callbacks, ebops_capture
 
@@ -703,6 +683,7 @@ def train(
     max_test_samples: int = 2000000,
     augment_rotation: bool = False,
     seed: int = 42,
+    use_adaptive_lr: bool = False,
 ):
     # Set global random seeds
     set_global_seed(seed)
@@ -796,6 +777,7 @@ def train(
             "max_test_samples": max_test_samples,
             "augment_rotation": augment_rotation,
             "seed": seed,
+            "use_adaptive_lr": use_adaptive_lr,
         }
 
         print("[DEBUG] Model Args: ")
@@ -827,7 +809,10 @@ def train(
         )
 
         callbacks, ebops_capture = build_callbacks(
-            early_stopping_patience, quantize, model_path=model_path if save else None
+            early_stopping_patience,
+            quantize,
+            model_path=model_path if save else None,
+            use_adaptive_lr=use_adaptive_lr,
         )
 
         if do_train:
@@ -981,6 +966,12 @@ if __name__ == "__main__":
         default=42,
         help="Random seed for weight initialization and dataset shuffling (default: 42)",
     )
+    parser.add_argument(
+        "--use_adaptive_lr",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Use dynamic noise-bounded AdaptiveReduceLROnPlateau callback instead of standard ReduceLROnPlateau",
+    )
     args = parser.parse_args()
 
     # Set global random seed immediately upon parsing arguments
@@ -1029,4 +1020,5 @@ if __name__ == "__main__":
         max_test_samples=args.max_test_samples,
         augment_rotation=args.augment_rotation,
         seed=args.seed,
+        use_adaptive_lr=args.use_adaptive_lr,
     )
