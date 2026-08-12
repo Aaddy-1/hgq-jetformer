@@ -78,6 +78,7 @@ class EbopsCaptureCallback(keras.callbacks.Callback):
         self.best_val_acc = -float("inf")
         self.best_ebops = None
         self.best_epoch = None
+        self.best_epochs = []
         self.start_from_epoch = start_from_epoch
         self.model_path = model_path
 
@@ -104,6 +105,7 @@ class EbopsCaptureCallback(keras.callbacks.Callback):
                 self.best_val_acc = val_acc
                 self.best_ebops = ebops
                 self.best_epoch = epoch
+                self.best_epochs.append(epoch)
                 if self.model_path:
                     self.model.save(self.model_path)
                     print(
@@ -318,16 +320,31 @@ def save_final_evaluation(acc, class_accs, aucs, classes, metadata, config, file
         json.dump(results, f, indent=4)
 
 
-def save_loss_acc(history_dict, num_particles, num_feats, output_path):
+def save_loss_acc(
+    history_dict,
+    num_particles,
+    num_feats,
+    output_path,
+    ebops=None,
+    beta=None,
+    best_epochs=None,
+):
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    np.savez(
-        output_path,
-        train_losses=np.array(history_dict["loss"]),
-        val_losses=np.array(history_dict["val_loss"]),
-        train_accs=np.array(history_dict.get("sparse_categorical_accuracy", [])),
-        val_accs=np.array(history_dict.get("val_sparse_categorical_accuracy", [])),
-    )
-    print(f"Loss and accuracy saved to {output_path}")
+    save_kwargs = {
+        "train_losses": np.array(history_dict["loss"]),
+        "val_losses": np.array(history_dict["val_loss"]),
+        "train_accs": np.array(history_dict.get("sparse_categorical_accuracy", [])),
+        "val_accs": np.array(history_dict.get("val_sparse_categorical_accuracy", [])),
+    }
+    if ebops is not None and len(ebops) > 0:
+        save_kwargs["ebops"] = np.array(ebops)
+    if beta is not None and len(beta) > 0:
+        save_kwargs["beta"] = np.array(beta)
+    if best_epochs is not None and len(best_epochs) > 0:
+        save_kwargs["best_epochs"] = np.array(best_epochs)
+
+    np.savez(output_path, **save_kwargs)
+    print(f"Loss, accuracy, and QAT metrics saved to {output_path}")
 
 
 def plot_loss_acc(history_dict, num_particles, num_feats, plot_path):
@@ -359,6 +376,111 @@ def plot_loss_acc(history_dict, num_particles, num_feats, plot_path):
     plt.savefig(plot_path)
     plt.close()
     print(f"Loss and accuracy plots saved to {plot_path}")
+
+
+def plot_ebops_beta(
+    history_dict,
+    best_epochs=None,
+    target_ebops=350000.0,
+    warmup_epoch=10,
+    plot_path=None,
+):
+    """Plots model EBOPs and BetaPID values across epochs.
+
+    Subplot 1: Model EBOPs vs Epoch (linear scale, target EBOPs reference line, warmup line, best checkpoint markers)
+    Subplot 2: BetaPID (beta) vs Epoch (log scale, warmup line, best checkpoint markers)
+    """
+    ebops = history_dict.get("ebops")
+    beta = history_dict.get("beta")
+
+    if ebops is None or len(ebops) == 0:
+        print("[QAT Plot] No EBOPs data found in history. Skipping EBOPs/BetaPID plot.")
+        return
+
+    os.makedirs(os.path.dirname(plot_path), exist_ok=True)
+    epochs = np.arange(len(ebops))
+    best_epochs = best_epochs or []
+
+    plt.figure(figsize=(8, 8))
+
+    # --- Subplot 1: EBOPs ---
+    plt.subplot(2, 1, 1)
+    plt.plot(epochs, ebops, label="Model EBOPs", color="#1f77b4", linewidth=2)
+    plt.axhline(
+        y=target_ebops,
+        color="red",
+        linestyle="--",
+        linewidth=1.5,
+        label=f"Target EBOPs ({int(target_ebops):,})",
+    )
+    if warmup_epoch is not None and warmup_epoch < len(epochs):
+        plt.axvline(
+            x=warmup_epoch,
+            color="gray",
+            linestyle=":",
+            linewidth=1.5,
+            label=f"PID Warmup End (Epoch {warmup_epoch})",
+        )
+
+    # Plot Best Model Checkpoint markers
+    best_ebops_pts = [ebops[ep] for ep in best_epochs if ep < len(ebops)]
+    if best_ebops_pts:
+        plt.scatter(
+            best_epochs,
+            best_ebops_pts,
+            color="gold",
+            edgecolors="black",
+            s=80,
+            zorder=5,
+            marker="*",
+            label="New Best Checkpoint",
+        )
+
+    plt.xlabel("Epoch")
+    plt.ylabel("EBOPs")
+    plt.title("Model EBOPs over Training")
+    plt.grid(True, linestyle="--", alpha=0.5)
+    plt.legend(loc="upper right")
+
+    # --- Subplot 2: BetaPID ---
+    plt.subplot(2, 1, 2)
+    if beta is not None and len(beta) > 0:
+        plt.plot(epochs, beta, label="BetaPID (Beta)", color="#ff7f0e", linewidth=2)
+        plt.yscale("log")
+        if warmup_epoch is not None and warmup_epoch < len(epochs):
+            plt.axvline(
+                x=warmup_epoch,
+                color="gray",
+                linestyle=":",
+                linewidth=1.5,
+                label=f"PID Warmup End (Epoch {warmup_epoch})",
+            )
+        best_beta_pts = [beta[ep] for ep in best_epochs if ep < len(beta)]
+        if best_beta_pts:
+            plt.scatter(
+                best_epochs,
+                best_beta_pts,
+                color="gold",
+                edgecolors="black",
+                s=80,
+                zorder=5,
+                marker="*",
+                label="New Best Checkpoint",
+            )
+        plt.ylabel("Beta (log scale)")
+    else:
+        plt.text(0.5, 0.5, "Beta data not available", ha="center", va="center")
+        plt.ylabel("Beta")
+
+    plt.xlabel("Epoch")
+    plt.title("BetaPID Parameter over Training")
+    plt.grid(True, linestyle="--", alpha=0.5)
+    plt.legend(loc="upper right")
+
+    plt.tight_layout()
+    plt.savefig(plot_path, dpi=300)
+    plt.close()
+    print(f"EBOPs and BetaPID plot saved to {plot_path}")
 
 
 def evaluate(outputs: np.ndarray, labels: np.ndarray, classes: list):
@@ -585,6 +707,9 @@ def train(
         plot_path = os.path.join(
             current_output_dir, f"{num_particles}_{num_feats}f_plot.png"
         )
+    ebops_beta_plot_path = os.path.join(
+        current_output_dir, f"{num_particles}_{num_feats}f_ebops_beta.png"
+    )
 
     eval_results_path = os.path.join(
         current_output_dir, f"{num_particles}_{num_feats}f_metrics.json"
@@ -685,8 +810,28 @@ def train(
             )
 
             if save:
-                save_loss_acc(history.history, num_particles, num_feats, output_path)
+                save_loss_acc(
+                    history.history,
+                    num_particles,
+                    num_feats,
+                    output_path,
+                    ebops=history.history.get("ebops"),
+                    beta=history.history.get("beta"),
+                    best_epochs=ebops_capture.best_epochs,
+                )
                 plot_loss_acc(history.history, num_particles, num_feats, plot_path)
+                if quantize:
+                    plot_ebops_beta(
+                        history.history,
+                        best_epochs=ebops_capture.best_epochs,
+                        target_ebops=350000.0,
+                        warmup_epoch=10,
+                        plot_path=ebops_beta_plot_path,
+                    )
+                else:
+                    print(
+                        "[QAT Plot] Unquantized training mode: skipping EBOPs and BetaPID plot generation."
+                    )
 
         run_post_training_pipeline(
             model,
