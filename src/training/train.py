@@ -45,8 +45,16 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 HLS4ML_CLASSES = ["Gluon", "Light_quarks", "W_boson", "Z_boson", "Top_quark"]
 
 JETCLASS_CLASSES = [
-    "g", "q", "W_qq", "Z_qq", "t_bqq",
-    "H_bb", "H_cc", "H_gg", "H_4q", "H_qq",
+    "g",
+    "q",
+    "W_qq",
+    "Z_qq",
+    "t_bqq",
+    "H_bb",
+    "H_cc",
+    "H_gg",
+    "H_4q",
+    "H_qq",
 ]
 
 # Shared training constant: epoch after which EBOPs and val_loss
@@ -58,6 +66,7 @@ def set_global_seed(seed: int = 42):
     """Sets random seeds across Python, NumPy, TensorFlow, and Keras for exact reproducibility."""
     import random
     import tensorflow as tf
+
     os.environ["PYTHONHASHSEED"] = str(seed)
     random.seed(seed)
     np.random.seed(seed)
@@ -155,9 +164,13 @@ def setup_data_generators(
     seed=42,
 ):
     if dataset == "jetclass":
-        base_path = os.path.join(PROCESSED_DIR, "jetclass", str(num_particles), f"{num_feats}f")
+        base_path = os.path.join(
+            PROCESSED_DIR, "jetclass", str(num_particles), f"{num_feats}f"
+        )
         if not os.path.exists(base_path):
-            base_path = os.path.join(PROCESSED_DIR, "jetclass", str(num_particles), "17f")
+            base_path = os.path.join(
+                PROCESSED_DIR, "jetclass", str(num_particles), "17f"
+            )
 
         # Find train_part*.h5 files or fallback to train.h5
         if train_parts is not None:
@@ -183,7 +196,9 @@ def setup_data_generators(
     print("================================")
     print("TRAIN H5 PATHS:", train_h5_paths)
     if augment_rotation:
-        print("[Dataset] Training augmentation enabled: Dynamic SO(2) rotation in (deta, dphi) plane")
+        print(
+            "[Dataset] Training augmentation enabled: Dynamic SO(2) rotation in (deta, dphi) plane"
+        )
 
     import h5py
 
@@ -200,7 +215,11 @@ def setup_data_generators(
                     x_key = "particle_features"
                 else:
                     x_key = list(f.keys())[0]
-                y_key = "jets" if "jets" in f else ("label" if "label" in f else list(f.keys())[1])
+                y_key = (
+                    "jets"
+                    if "jets" in f
+                    else ("label" if "label" in f else list(f.keys())[1])
+                )
             total_train_samples += f[x_key].shape[0]
 
     if in_memory:
@@ -211,8 +230,10 @@ def setup_data_generators(
                 unique_classes = np.unique(y_all)
                 quota = max_samples // len(unique_classes)
                 sample_bytes = num_particles * num_feats * 4
-                ram_gb = (max_samples * sample_bytes) / (1024 ** 3)
-                print(f"[Dataset] Fast 10-block slice pre-loading: {quota:,} contiguous samples/class ({max_samples:,} total = {ram_gb:.2f} GB RAM)...")
+                ram_gb = (max_samples * sample_bytes) / (1024**3)
+                print(
+                    f"[Dataset] Fast 10-block slice pre-loading: {quota:,} contiguous samples/class ({max_samples:,} total = {ram_gb:.2f} GB RAM)..."
+                )
 
                 x_chunks, y_chunks = [], []
                 for cls in unique_classes:
@@ -226,8 +247,10 @@ def setup_data_generators(
                 del x_chunks, y_chunks, y_all
             else:
                 sample_bytes = num_particles * num_feats * 4
-                ram_gb = (total_train_samples * sample_bytes) / (1024 ** 3)
-                print(f"[Dataset] Pre-loading full dataset into RAM ({total_train_samples:,} samples = {ram_gb:.2f} GB RAM)...")
+                ram_gb = (total_train_samples * sample_bytes) / (1024**3)
+                print(
+                    f"[Dataset] Pre-loading full dataset into RAM ({total_train_samples:,} samples = {ram_gb:.2f} GB RAM)..."
+                )
                 shared_x = f[x_key][:]
                 shared_y = y_all
                 del y_all
@@ -241,7 +264,9 @@ def setup_data_generators(
         train_y, val_y = shared_y[val_size:], shared_y[:val_size]
         del shared_x, shared_y
 
-        print(f"[Dataset] Pre-load complete. Splitting train ({len(train_y):,}) / val ({len(val_y):,})...")
+        print(
+            f"[Dataset] Pre-load complete. Splitting train ({len(train_y):,}) / val ({len(val_y):,})..."
+        )
 
         train_gen = JetFormerDataGenerator(
             h5_path=train_h5_paths,
@@ -285,7 +310,13 @@ def setup_data_generators(
 
     # test_gen ALWAYS streams sequentially from disk (never pre-loaded)
     with h5py.File(test_h5_path, "r") as f:
-        key = "jetConstituentList" if "jetConstituentList" in f else ("particle_features" if "particle_features" in f else list(f.keys())[0])
+        key = (
+            "jetConstituentList"
+            if "jetConstituentList" in f
+            else (
+                "particle_features" if "particle_features" in f else list(f.keys())[0]
+            )
+        )
         total_test_samples = f[key].shape[0]
 
     if max_test_samples is not None and max_test_samples > 0:
@@ -546,7 +577,7 @@ def build_callbacks(
                 ebops_threshold=450000,
                 monitor="val_sparse_categorical_accuracy",
                 patience=early_stopping_patience,
-                min_delta=1e-3,
+                min_delta=1e-4,
                 mode="max",
                 restore_best_weights=False,
                 start_from_epoch=EBOPS_WARMUP_EPOCH,
@@ -622,11 +653,12 @@ def run_post_training_pipeline(
     if classes is None:
         classes = HLS4ML_CLASSES
 
-
     # Invoke standalone evaluation pipeline from evaluate.py
     from src.training.evaluate import run_standalone_evaluation
 
-    print("\n[Post-Training] Transitioning to standalone evaluation pipeline (evaluate.py)...")
+    print(
+        "\n[Post-Training] Transitioning to standalone evaluation pipeline (evaluate.py)..."
+    )
     run_standalone_evaluation(
         num_particles=config.get("num_particles", 128),
         num_feats=config.get("in_dim", 17),
@@ -872,9 +904,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--batch_size", type=int, default=256, help="Training batch size"
     )
-    parser.add_argument(
-        "--dropout", type=float, default=0.0, help="Dropout rate"
-    )
+    parser.add_argument("--dropout", type=float, default=0.0, help="Dropout rate")
     parser.add_argument(
         "--train_parts",
         type=int,
@@ -975,7 +1005,7 @@ if __name__ == "__main__":
             num_feats=num_feats,
             ram_safety_ratio=0.50,
         )
-        in_memory = (strategy == "FULL_RAM")
+        in_memory = strategy == "FULL_RAM"
 
     train(
         num_particles=num_particles,
