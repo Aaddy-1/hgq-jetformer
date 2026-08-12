@@ -160,6 +160,10 @@ class AdaptiveReduceLROnPlateau(keras.callbacks.Callback):
 
     def on_epoch_end(self, epoch, logs=None):
         logs = logs or {}
+        current_lr = float(ops.convert_to_numpy(self.model.optimizer.learning_rate))
+        logs["lr"] = current_lr
+        logs["learning_rate"] = current_lr
+
         current_acc = logs.get("val_sparse_categorical_accuracy")
         if current_acc is None:
             return
@@ -192,20 +196,22 @@ class AdaptiveReduceLROnPlateau(keras.callbacks.Callback):
         else:
             self.patience_wait += 1
 
-        # Debug printout per epoch
+        # Debug printout per epoch including current LR
         print(
             f" [LR-Debug] Ep {epoch+1}: acc={current_acc:.4f}, best={self.best_acc:.4f}, "
-            f"std={noise_std:.5f}, min_delta={dynamic_min_delta:.5f}, wait={self.patience_wait}/{self.patience}"
+            f"std={noise_std:.5f}, min_delta={dynamic_min_delta:.5f}, wait={self.patience_wait}/{self.patience}, lr={current_lr:.6f}"
         )
 
         # 5. Trigger LR reduction when patience is exhausted
         if self.patience_wait >= self.patience:
-            old_lr = float(ops.convert_to_numpy(self.model.optimizer.learning_rate))
+            old_lr = current_lr
             if old_lr > self.min_lr:
                 new_lr = max(old_lr * self.factor, self.min_lr)
                 self.model.optimizer.learning_rate = new_lr
                 self.cooldown_wait = self.cooldown
                 self.patience_wait = 0
+                logs["lr"] = new_lr
+                logs["learning_rate"] = new_lr
                 print(
                     f"\n>>> [AdaptiveReduceLROnPlateau] Epoch {epoch+1}: Reducing LR from {old_lr:.6f} to {new_lr:.6f} "
                     f"(dynamic min_delta was {dynamic_min_delta:.5f}).\n"
