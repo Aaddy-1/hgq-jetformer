@@ -423,7 +423,8 @@ def build_callbacks(
             EarlyStoppingWithEbopsThres(
                 ebops_threshold=450000,
                 monitor="val_sparse_categorical_accuracy",
-                patience=150,
+                patience=early_stopping_patience,
+                min_delta=1e-3,
                 mode="max",
                 restore_best_weights=False,
                 start_from_epoch=EBOPS_WARMUP_EPOCH,
