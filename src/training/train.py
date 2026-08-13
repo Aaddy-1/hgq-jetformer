@@ -49,17 +49,20 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 # Define classes for each supported dataset
 HLS4ML_CLASSES = ["Gluon", "Light_quarks", "W_boson", "Z_boson", "Top_quark"]
 
+# Order is significant: index i must name label_list[i] in
+# src/data/build_jetclass_dataset.py, which is the source of truth for the
+# integer labels written to disk. Keep the two lists in sync.
 JETCLASS_CLASSES = [
-    "g",
-    "q",
-    "W_qq",
-    "Z_qq",
-    "t_bqq",
-    "H_bb",
-    "H_cc",
-    "H_gg",
-    "H_4q",
-    "H_qq",
+    "QCD",    # label_QCD  - merged light quark / gluon
+    "H_bb",   # label_Hbb
+    "H_cc",   # label_Hcc
+    "H_gg",   # label_Hgg
+    "H_4q",   # label_H4q
+    "H_qql",  # label_Hqql - H -> qq'lv
+    "Z_qq",   # label_Zqq
+    "W_qq",   # label_Wqq
+    "t_bqq",  # label_Tbqq
+    "t_bl",   # label_Tbl  - t -> blv
 ]
 
 # Shared training constant: epoch after which EBOPs and val_loss
