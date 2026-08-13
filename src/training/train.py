@@ -251,6 +251,54 @@ def setup_data_generators(
             augment_rotation=False,
         )
     else:
+        # Build train/val index splits without reading features into RAM.
+        # Labels only (~0.5% of feature volume), so this stays low-footprint.
+        #
+        # Two constraints, both already solved by the in_memory branch above:
+        #   1. JetFormerDataGenerator keeps self.indices ordered and shuffles
+        #      block_order instead, so contiguous runs hit the fast HDF5 slice
+        #      path. Scattered indices would force slow fancy-indexing.
+        #   2. The raw files are class-ordered on disk, so a plain head/tail
+        #      split would yield a class-skewed validation set.
+        # Splitting each class's contiguous block individually satisfies both.
+        y_parts = []
+        for p in train_h5_paths:
+            with h5py.File(p, "r") as f:
+                y_part = f[y_key][:]
+            if y_part.ndim > 1 and y_part.shape[-1] > 1:
+                y_part = np.argmax(y_part, axis=-1)
+            y_parts.append(y_part.astype(np.int64))
+        y_all = np.concatenate(y_parts)
+        del y_parts
+
+        unique_classes = np.unique(y_all)
+        per_class_quota = (
+            max_samples // len(unique_classes)
+            if max_samples is not None and max_samples < len(y_all)
+            else None
+        )
+
+        train_chunks, val_chunks = [], []
+        for cls in unique_classes:
+            cls_indices = np.where(y_all == cls)[0]
+            if per_class_quota is not None:
+                cls_indices = cls_indices[:per_class_quota]
+            val_size = int(len(cls_indices) * val_ratio)
+            # Val taken from the head, train from the tail, matching the
+            # in_memory split above.
+            val_chunks.append(cls_indices[:val_size])
+            train_chunks.append(cls_indices[val_size:])
+
+        train_indices = np.concatenate(train_chunks)
+        val_indices = np.concatenate(val_chunks)
+        del y_all, train_chunks, val_chunks
+
+        print(
+            f"[Dataset] Block-stream stratified split across "
+            f"{len(unique_classes)} classes: train ({len(train_indices):,}) / "
+            f"val ({len(val_indices):,})"
+        )
+
         train_gen = JetFormerDataGenerator(
             h5_path=train_h5_paths,
             stats_dir=base_path,
