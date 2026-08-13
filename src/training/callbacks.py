@@ -1,3 +1,5 @@
+import os
+
 import keras
 from keras import ops
 
@@ -88,6 +90,46 @@ class QATEarlyStoppingAndCheckpoint(keras.callbacks.Callback):
                 f"(val_acc: {best_val_str}, ebops: {best_ebops_str})."
             )
             self.model.stop_training = True
+
+
+class FinalEpochCheckpoint(keras.callbacks.Callback):
+    """Saves the last-epoch weights alongside -- never on top of -- the gated checkpoint.
+
+    Commit 52e42c6 saved the final epoch unconditionally to the *same* path the
+    EBOP-gated checkpoint used, silently overwriting it. That is how
+    EXP-18_lowerwarmup_seed44 came to hold a 6,854,896-EBOP model while its
+    metrics recorded 365,644 for best_epoch 417 -- the metadata described a state
+    that no longer existed on disk.
+
+    To make that failure impossible rather than merely unlikely, this callback
+    takes the *gated* checkpoint path and derives its own output from it
+    (`<stem>_final<ext>`). The caller cannot accidentally point both at the same
+    file.
+    """
+
+    def __init__(self, checkpoint_path: str = None):
+        super().__init__()
+        self.model_path = None
+        if checkpoint_path:
+            stem, ext = os.path.splitext(checkpoint_path)
+            self.model_path = f"{stem}_final{ext or '.keras'}"
+        self.final_ebops = None
+        self.final_epoch = None
+
+    def on_epoch_end(self, epoch, logs=None):
+        self.final_epoch = epoch
+
+    def on_train_end(self, logs=None):
+        if not self.model_path:
+            return
+        self.final_ebops = get_model_ebops(self.model)
+        self.model.save(self.model_path)
+        ebops_str = f"{self.final_ebops:.0f}" if self.final_ebops is not None else "N/A"
+        epoch_str = f"{self.final_epoch + 1}" if self.final_epoch is not None else "N/A"
+        print(
+            f"\n[FinalEpoch] Saved last-epoch model (epoch {epoch_str}, "
+            f"ebops: {ebops_str}) to {self.model_path}"
+        )
 
 
 class EbopsCaptureCallback(keras.callbacks.Callback):

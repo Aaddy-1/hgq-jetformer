@@ -33,6 +33,7 @@ from src.training.callbacks import (
     QATEarlyStoppingAndCheckpoint,
     EbopsCaptureCallback,
     AdaptiveReduceLROnPlateau,
+    FinalEpochCheckpoint,
 )
 
 # Path variables
@@ -65,9 +66,29 @@ JETCLASS_CLASSES = [
     "t_bl",   # label_Tbl  - t -> blv
 ]
 
-# Shared training constant: epoch after which EBOPs and val_loss
-# are expected to have stabilized under PID control.
+# Default epoch after which EBOPs and val_loss are expected to have stabilized
+# under PID control. Overridable per run via --ebops_warmup_epoch; this name is
+# also exported by callbacks.py, so keep the two in sync if the default changes.
 EBOPS_WARMUP_EPOCH = 75
+
+# The two EBOPs controls are distinct and must not be set equal.
+#
+#   target_ebops     - the BetaPID *setpoint*; the value the controller regulates
+#                      to, and therefore what decides where a run lands on the
+#                      EBOPs axis. EXP-18_REPRODUCTION settled at 348,977 against
+#                      a 350,000 setpoint while the 450,000 gate never bound.
+#   ebops_threshold  - the gate QATEarlyStoppingAndCheckpoint applies before it
+#                      will save at all.
+#
+# Regulation oscillates around the setpoint -- archived runs sit on both sides of
+# it (348,977 below; EXP-22_STANDARD_FIX at 442,233 against the same 350,000
+# target, 26% above). If the gate equals the setpoint, roughly half of converged
+# epochs become ineligible to save, and because the callback only resets its
+# patience counter on a successful save, those blocked epochs also burn patience.
+# Keeping ~20% headroom admits normal ripple while still catching genuine runaway
+# (cf. EXP-18_lowerwarmup_seed44 at 6,854,896).
+DEFAULT_TARGET_EBOPS = 450000.0
+DEFAULT_EBOPS_THRESHOLD = 550000.0
 
 
 
@@ -87,7 +108,9 @@ def set_global_seed(seed: int = 42):
 
 
 
-def extract_model_metadata(model, best_ebops, best_epoch, num_test_samples=None):
+def extract_model_metadata(
+    model, best_ebops, best_epoch, num_test_samples=None, artifacts=None
+):
     layers_metadata = []
     for layer in model.layers:
         try:
@@ -111,6 +134,12 @@ def extract_model_metadata(model, best_ebops, best_epoch, num_test_samples=None)
     }
     if num_test_samples is not None:
         metadata["num_test_samples"] = int(num_test_samples)
+    # One EBOPs figure per *file* rather than one per run. The single top-level
+    # "ebops" field cannot express a run that wrote more than one checkpoint,
+    # which is how EXP-18_lowerwarmup_seed44's metadata came to claim 365,644
+    # while the file on disk held 6,854,896 -- undetected for three days.
+    if artifacts:
+        metadata["artifacts"] = artifacts
     return metadata
 
 
@@ -240,6 +269,10 @@ def setup_data_generators(
             num_feats=num_feats,
             preloaded_data=(train_x, train_y),
             augment_rotation=augment_rotation,
+            # Without this the generator builds np.random.default_rng(None),
+            # which draws from OS entropy and does NOT inherit np.random.seed().
+            # Batch order would then differ between runs at identical --seed.
+            seed=seed,
         )
         val_gen = JetFormerDataGenerator(
             h5_path=train_h5_paths,
@@ -249,6 +282,7 @@ def setup_data_generators(
             num_feats=num_feats,
             preloaded_data=(val_x, val_y),
             augment_rotation=False,
+            seed=seed,
         )
     else:
         # Build train/val index splits without reading features into RAM.
@@ -308,6 +342,7 @@ def setup_data_generators(
             num_feats=num_feats,
             in_memory=False,
             augment_rotation=augment_rotation,
+            seed=seed,
         )
         val_gen = JetFormerDataGenerator(
             h5_path=train_h5_paths,
@@ -318,6 +353,7 @@ def setup_data_generators(
             num_feats=num_feats,
             in_memory=False,
             augment_rotation=False,
+            seed=seed,
         )
 
     # test_gen ALWAYS streams sequentially from disk (never pre-loaded)
@@ -344,6 +380,7 @@ def setup_data_generators(
         indices=test_indices,
         num_feats=num_feats,
         in_memory=False,
+        seed=seed,
     )
     return train_gen, val_gen, test_gen
 
@@ -424,7 +461,7 @@ def plot_loss_acc(history_dict, num_particles, num_feats, plot_path):
 def plot_ebops_beta(
     history_dict,
     best_epochs=None,
-    target_ebops=350000.0,
+    target_ebops=DEFAULT_TARGET_EBOPS,
     warmup_epoch=10,
     plot_path=None,
 ):
@@ -582,16 +619,21 @@ def build_callbacks(
     quantize: bool,
     model_path: str = None,
     use_adaptive_lr: bool = False,
+    target_ebops: float = DEFAULT_TARGET_EBOPS,
+    ebops_threshold: float = DEFAULT_EBOPS_THRESHOLD,
+    ebops_warmup_epoch: int = EBOPS_WARMUP_EPOCH,
+    save_final_epoch: bool = False,
 ):
     callbacks = []
+    final_cb = None
 
     if quantize:
         # --- Quantized Training Callbacks (Unified EarlyStopping & Checkpoint) ---
         qat_cb = QATEarlyStoppingAndCheckpoint(
-            ebops_threshold=450000.0,
+            ebops_threshold=ebops_threshold,
             patience=early_stopping_patience,
             min_delta=1e-3,
-            start_from_epoch=EBOPS_WARMUP_EPOCH,
+            start_from_epoch=ebops_warmup_epoch,
             model_path=model_path,
         )
         callbacks.append(qat_cb)
@@ -609,7 +651,7 @@ def build_callbacks(
                     window=8,
                     c_safety=1.25,
                     min_delta_floor=1e-4,
-                    start_from_epoch=EBOPS_WARMUP_EPOCH,
+                    start_from_epoch=ebops_warmup_epoch,
                 )
             )
         else:
@@ -630,7 +672,7 @@ def build_callbacks(
                 p=1,
                 i=0.1,
                 d=0,
-                target_ebops=350000.0,
+                target_ebops=target_ebops,
                 init_beta=1e-10,
                 warmup=10,
                 max_beta=5e-6,
@@ -665,7 +707,14 @@ def build_callbacks(
         )
         callbacks.append(ebops_capture)
 
-    return callbacks, ebops_capture
+    # Applies to both paths: the last-epoch model is written to its own file,
+    # derived inside the callback from model_path, so it can never overwrite the
+    # gated checkpoint.
+    if save_final_epoch and model_path:
+        final_cb = FinalEpochCheckpoint(checkpoint_path=model_path)
+        callbacks.append(final_cb)
+
+    return callbacks, ebops_capture, final_cb
 
 
 def run_post_training_pipeline(
@@ -680,6 +729,7 @@ def run_post_training_pipeline(
     best_epoch: int,
     config: dict,
     classes: list = None,
+    artifacts: list = None,
 ):
     if classes is None:
         classes = HLS4ML_CLASSES
@@ -702,6 +752,7 @@ def run_post_training_pipeline(
         in_memory=True,
         best_ebops=best_ebops,
         best_epoch=best_epoch,
+        artifacts=artifacts,
     )
 
 
@@ -735,6 +786,10 @@ def train(
     augment_rotation: bool = False,
     seed: int = 42,
     use_adaptive_lr: bool = False,
+    target_ebops: float = DEFAULT_TARGET_EBOPS,
+    ebops_threshold: float = DEFAULT_EBOPS_THRESHOLD,
+    ebops_warmup_epoch: int = EBOPS_WARMUP_EPOCH,
+    save_final_epoch: bool = False,
 ):
     # Set global random seeds
     set_global_seed(seed)
@@ -828,6 +883,10 @@ def train(
             "max_test_samples": max_test_samples,
             "augment_rotation": augment_rotation,
             "seed": seed,
+            "target_ebops": target_ebops,
+            "ebops_threshold": ebops_threshold,
+            "ebops_warmup_epoch": ebops_warmup_epoch,
+            "save_final_epoch": save_final_epoch,
             "use_adaptive_lr": use_adaptive_lr,
         }
 
@@ -859,11 +918,15 @@ def train(
             metrics=["sparse_categorical_accuracy"],
         )
 
-        callbacks, ebops_capture = build_callbacks(
+        callbacks, ebops_capture, final_cb = build_callbacks(
             early_stopping_patience,
             quantize,
             model_path=model_path if save else None,
             use_adaptive_lr=use_adaptive_lr,
+            target_ebops=target_ebops,
+            ebops_threshold=ebops_threshold,
+            ebops_warmup_epoch=ebops_warmup_epoch,
+            save_final_epoch=save_final_epoch,
         )
 
         if do_train:
@@ -892,7 +955,10 @@ def train(
                     plot_ebops_beta(
                         history.history,
                         best_epochs=ebops_capture.best_epochs,
-                        target_ebops=350000.0,
+                        target_ebops=target_ebops,
+                        # BetaPID's own warmup (when beta starts being applied),
+                        # which is distinct from --ebops_warmup_epoch (when the
+                        # checkpoint callback starts considering saves).
                         warmup_epoch=10,
                         plot_path=ebops_beta_plot_path,
                     )
@@ -900,6 +966,30 @@ def train(
                     print(
                         "[QAT Plot] Unquantized training mode: skipping EBOPs and BetaPID plot generation."
                     )
+
+        # One entry per checkpoint actually written, each carrying its own EBOPs
+        # as measured at save time.
+        artifacts = []
+        if save and model_path and ebops_capture.best_epoch is not None:
+            artifacts.append(
+                {
+                    "path": os.path.relpath(model_path, PROJECT_ROOT),
+                    "kind": "gated_best",
+                    "epoch": ebops_capture.best_epoch,
+                    "ebops": ebops_capture.best_ebops,
+                }
+            )
+        # final_epoch is only set once an epoch has actually ended, so this stays
+        # empty when do_train is False and no file was written.
+        if final_cb is not None and final_cb.final_epoch is not None:
+            artifacts.append(
+                {
+                    "path": os.path.relpath(final_cb.model_path, PROJECT_ROOT),
+                    "kind": "final_epoch",
+                    "epoch": final_cb.final_epoch,
+                    "ebops": final_cb.final_ebops,
+                }
+            )
 
         run_post_training_pipeline(
             model,
@@ -913,6 +1003,7 @@ def train(
             ebops_capture.best_epoch,
             config,
             classes=classes,
+            artifacts=artifacts,
         )
 
 
@@ -1023,6 +1114,30 @@ if __name__ == "__main__":
         default=False,
         help="Use dynamic noise-bounded AdaptiveReduceLROnPlateau callback instead of standard ReduceLROnPlateau",
     )
+    parser.add_argument(
+        "--target_ebops",
+        type=float,
+        default=DEFAULT_TARGET_EBOPS,
+        help=f"BetaPID setpoint: the EBOPs value the controller regulates to (default: {DEFAULT_TARGET_EBOPS:,.0f})",
+    )
+    parser.add_argument(
+        "--ebops_threshold",
+        type=float,
+        default=DEFAULT_EBOPS_THRESHOLD,
+        help=f"Checkpoint gate: models are only saved when EBOPs <= this (default: {DEFAULT_EBOPS_THRESHOLD:,.0f}). Keep above --target_ebops so normal PID ripple does not block saves.",
+    )
+    parser.add_argument(
+        "--ebops_warmup_epoch",
+        type=int,
+        default=EBOPS_WARMUP_EPOCH,
+        help=f"Epoch from which the checkpoint/early-stopping callback starts considering saves (default: {EBOPS_WARMUP_EPOCH}). Distinct from BetaPID's own warmup.",
+    )
+    parser.add_argument(
+        "--save_final_epoch",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Additionally save the last-epoch model to <stem>_final.keras, alongside the gated checkpoint",
+    )
     args = parser.parse_args()
 
     # Set global random seed immediately upon parsing arguments
@@ -1072,4 +1187,8 @@ if __name__ == "__main__":
         augment_rotation=args.augment_rotation,
         seed=args.seed,
         use_adaptive_lr=args.use_adaptive_lr,
+        target_ebops=args.target_ebops,
+        ebops_threshold=args.ebops_threshold,
+        ebops_warmup_epoch=args.ebops_warmup_epoch,
+        save_final_epoch=args.save_final_epoch,
     )
