@@ -39,6 +39,7 @@ def run_standalone_evaluation(
     in_memory: bool = True,
     best_ebops: float = None,
     best_epoch: int = None,
+    artifacts: list = None,
 ):
     classes = JETCLASS_CLASSES if dataset == "jetclass" else HLS4ML_CLASSES
     current_model_dir, current_output_dir = resolve_experiment_paths(
@@ -227,7 +228,13 @@ def run_standalone_evaluation(
 
     test_acc, test_class_accs, test_aucs = evaluate(outputs, labels, classes)
 
-    metadata = extract_model_metadata(model, best_ebops=best_ebops, best_epoch=best_epoch, num_test_samples=len(labels))
+    metadata = extract_model_metadata(
+        model,
+        best_ebops=best_ebops,
+        best_epoch=best_epoch,
+        num_test_samples=len(labels),
+        artifacts=artifacts,
+    )
     config = {
         "num_particles": num_particles,
         "num_feats": num_feats,
