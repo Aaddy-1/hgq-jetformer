@@ -1138,6 +1138,17 @@ if __name__ == "__main__":
         default=False,
         help="Additionally save the last-epoch model to <stem>_final.keras, alongside the gated checkpoint",
     )
+    # Set >= --num_epochs to disable early stopping and observe the full training
+    # curve. EXP-24 stopped both seeds at anchor+150 while validation accuracy was
+    # still climbing out of its trough (seed 42: 0.384 @ ep202 -> 0.557 @ ep246;
+    # seed 43: 0.401 @ ep196 -> 0.626 @ ep261), so whether the recovery ever clears
+    # the early anchor has never actually been observed.
+    parser.add_argument(
+        "--early_stopping_patience",
+        type=int,
+        default=150,
+        help="Epochs without a new saved checkpoint before training stops (default: 150). Set >= --num_epochs to disable.",
+    )
     args = parser.parse_args()
 
     # Set global random seed immediately upon parsing arguments
@@ -1174,7 +1185,7 @@ if __name__ == "__main__":
         num_heads=args.num_heads,
         use_cls_token=args.use_cls_token,
         use_linformer=args.use_linformer,
-        early_stopping_patience=150,
+        early_stopping_patience=args.early_stopping_patience,
         dropout=args.dropout,
         val_ratio=0.1,
         experiment=args.experiment,
