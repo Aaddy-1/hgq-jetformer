@@ -23,6 +23,7 @@ from src.training.train import (
     resolve_experiment_paths,
     evaluate,
     extract_model_metadata,
+    get_run_provenance,
     save_final_evaluation,
 )
 
@@ -40,6 +41,7 @@ def run_standalone_evaluation(
     best_ebops: float = None,
     best_epoch: int = None,
     artifacts: list = None,
+    calib_seed: int = 42,
 ):
     classes = JETCLASS_CLASSES if dataset == "jetclass" else HLS4ML_CLASSES
     current_model_dir, current_output_dir = resolve_experiment_paths(
@@ -133,6 +135,12 @@ def run_standalone_evaluation(
 
     if quantize:
         print("\n[HGQ] Initiating activation profiling for WRAP mode calibration...")
+        # This generator shuffled with np.random.default_rng(None) until calib_seed
+        # was threaded in, so x_calib was a different 2,560 samples on every call --
+        # trace_minmax then set different integer boundaries and the *same*
+        # checkpoint could score differently on re-evaluation. The seed is
+        # deliberately independent of the training --seed: a fixed calibration set
+        # makes accuracies comparable *across* runs, not merely repeatable within one.
         train_gen = JetFormerDataGenerator(
             h5_path=train_h5_path,
             stats_dir=base_path,
@@ -140,11 +148,15 @@ def run_standalone_evaluation(
             shuffle=True,
             num_feats=num_feats,
             in_memory=False,
+            seed=calib_seed,
         )
         it = iter(train_gen)
         x_calib = np.concatenate([next(it)[0] for _ in range(10)], axis=0)
         trace_minmax(model, x_calib)
-        print("[HGQ] Profiling complete. Integer boundaries calibrated.")
+        print(
+            f"[HGQ] Profiling complete on {len(x_calib):,} samples "
+            f"(calib_seed={calib_seed}). Integer boundaries calibrated."
+        )
 
     print(f"\nExecuting Inference on Test Set ({eval_samples:,} samples)...")
 
@@ -243,6 +255,8 @@ def run_standalone_evaluation(
         "experiment": experiment,
         "quantize": quantize,
         "dataset": dataset,
+        "calib_seed": calib_seed if quantize else None,
+        "provenance": get_run_provenance(),
     }
 
     save_final_evaluation(
@@ -295,6 +309,13 @@ if __name__ == "__main__":
         default=True,
         help="Pre-load test set into RAM for ultra-fast evaluation (default: True)",
     )
+    parser.add_argument(
+        "--calib_seed",
+        type=int,
+        default=42,
+        help="Seed for the WRAP-mode calibration sample (default: 42). Keep fixed "
+        "across runs so accuracies stay comparable; it is independent of --seed.",
+    )
     args = parser.parse_args()
 
     run_standalone_evaluation(
@@ -307,4 +328,5 @@ if __name__ == "__main__":
         dataset=args.dataset,
         model_path=args.model_path,
         in_memory=args.in_memory,
+        calib_seed=args.calib_seed,
     )
