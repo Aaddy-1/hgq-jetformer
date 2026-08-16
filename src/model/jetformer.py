@@ -53,6 +53,7 @@ def build_hgq_jetformer(
     quantize=True,
     use_linformer=True,
     use_cls_token=False,
+    floor_attn_datalane=False,
 ):
     # 1. Explicit Input Definition
     inputs = keras.Input(shape=(num_particles, in_dim), name="input_particles")
@@ -103,6 +104,7 @@ def build_hgq_jetformer(
             quantize=quantize,
             use_linformer=use_linformer,
             block_name=f"transformer_block_{i}",
+            floor_attn_datalane=floor_attn_datalane,
         )
 
     # 5. Aggregation
