@@ -105,6 +105,80 @@ def set_global_seed(seed: int = 42):
     print(f"[Seed] Global random seed set to {seed} (Python, NumPy, TensorFlow, Keras)")
 
 
+def get_run_provenance():
+    """Records which machine, card and commit produced a run.
+
+    EXP-24 and EXP-25 used different GPUs for the same seed (s42: GPU 3 then 2;
+    s43: GPU 2 then 3), which is why their curves diverge at epoch 1 despite an
+    identical --seed. That was recoverable only because it was remembered -- no
+    artifact recorded it. The server is shared, so card assignment cannot be
+    controlled and the confound has to be *recorded* rather than eliminated.
+
+    Never raises: a provenance failure must not take down a training run, so
+    every probe degrades to None/[] instead.
+    """
+    import socket
+    import subprocess
+
+    provenance = {
+        "hostname": None,
+        "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
+        "git_commit": None,
+        "git_dirty": None,
+        "gpus": [],
+    }
+
+    try:
+        provenance["hostname"] = socket.gethostname()
+    except Exception:
+        pass
+
+    try:
+        provenance["git_commit"] = (
+            subprocess.check_output(
+                ["git", "rev-parse", "HEAD"],
+                cwd=PROJECT_ROOT,
+                stderr=subprocess.DEVNULL,
+            )
+            .decode()
+            .strip()
+        )
+        # Uncommitted edits mean the commit hash alone does not identify the code
+        # that ran -- scripts/analyze_ebops.py has carried local changes for weeks.
+        provenance["git_dirty"] = bool(
+            subprocess.check_output(
+                ["git", "status", "--porcelain"],
+                cwd=PROJECT_ROOT,
+                stderr=subprocess.DEVNULL,
+            )
+            .decode()
+            .strip()
+        )
+    except Exception:
+        pass
+
+    try:
+        # Imported inside the try so a missing/broken TF cannot break a run, and
+        # so the function stays callable on machines without TensorFlow.
+        import tensorflow as tf
+
+        # Listed *after* CUDA_VISIBLE_DEVICES is applied, so this is the card the
+        # run actually used, not every card on the box.
+        for dev in tf.config.list_physical_devices("GPU"):
+            details = tf.config.experimental.get_device_details(dev)
+            cc = details.get("compute_capability")
+            provenance["gpus"].append(
+                {
+                    "name": details.get("device_name"),
+                    "compute_capability": ".".join(str(c) for c in cc) if cc else None,
+                }
+            )
+    except Exception:
+        pass
+
+    return provenance
+
+
 
 
 
@@ -888,6 +962,7 @@ def train(
             "ebops_warmup_epoch": ebops_warmup_epoch,
             "save_final_epoch": save_final_epoch,
             "use_adaptive_lr": use_adaptive_lr,
+            "provenance": get_run_provenance(),
         }
 
         print("[DEBUG] Model Args: ")
