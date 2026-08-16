@@ -27,6 +27,7 @@ def apply_hgq_transformer_block(
     use_linformer=True,
     block_name="transformer_block",
     training=False,
+    floor_attn_datalane=False,
 ):
     latent_dim = latent_dim if latent_dim is not None else in_dim
     head_dim = latent_dim // num_heads
@@ -59,9 +60,20 @@ def apply_hgq_transformer_block(
     #   - bc=MinMax(1, 8): Constrains attention bit-widths to [1, 8] bits,
     #     preventing the optimizer from pruning attention heads to 0-bits
     #     (which would reduce the Transformer to a trivial DeepSets model).
+    #
+    #     CAVEAT: bc only reaches KBI-typed quantizers -- weights, biases, tables.
+    #     Datalane (activation) quantizers are KIF-typed and have no `b`, so bc is
+    #     silently ignored there and ic/fc fall through to the library defaults
+    #     MinMax(-23, 23) / MinMax(-24, 24). Measured on EXP-25_FULLCURVE_SEED42:
+    #     every bc-constrained quantizer is 0.0% pruned, while 63.3% of
+    #     q_einsum_dense_iq's channels sit at k+i+f <= 0. The DeepSets collapse this
+    #     scope was written to prevent has been happening through the activations.
+    #     See floor_attn_datalane below and knowledge_base.md Part I 4.2 / 5.8.
     if quantize:
         from hgq.config import QuantizerConfigScope
         from hgq.constraints import MinMax
+
+        import contextlib
 
         mha_scope = QuantizerConfigScope(
             k0=1, i0=1, f0=6,
@@ -69,7 +81,30 @@ def apply_hgq_transformer_block(
             overflow_mode="SAT",
             bc=MinMax(1, 8),
         )
-        with mha_scope:
+
+        # The prune test is on the SUM k+i+f, and hgq.constraints offers no sum
+        # constraint, so the floors must be chosen such that their minima sum above
+        # zero. fc>=1 alone still leaves k+(-23)+1 = -22; ic>=0 with fc>=0 leaves k,
+        # which is 0 whenever k=0 -- and k is data-driven (get_any_k), so post-ReLU
+        # non-negative channels can reach it. ic>=0 AND fc>=1 gives a minimum of 1
+        # regardless of k. Ceilings stay at the library defaults so the A/B against
+        # floor_attn_datalane=False moves exactly one variable.
+        #
+        # place="datalane" is REQUIRED, not tidiness. KBIConfig also has an `ic`
+        # field, so an unplaced scope silently applies this floor to the weight
+        # quantizers too -- and since KBI derives f = b - i, forcing i upward to 0
+        # *removes* fractional bits from weights. Verified: without the place
+        # argument, query_kq goes from ic=None to ic=(0,23).
+        scopes = contextlib.ExitStack()
+        scopes.enter_context(mha_scope)
+        if floor_attn_datalane:
+            scopes.enter_context(
+                QuantizerConfigScope(
+                    place="datalane", ic=MinMax(0, 23), fc=MinMax(1, 24)
+                )
+            )
+
+        with scopes:
             if use_linformer:
                 attn_out = QLinformerAttention(
                     num_heads=num_heads,

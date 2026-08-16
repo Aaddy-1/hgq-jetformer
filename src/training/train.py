@@ -844,6 +844,7 @@ def train(
     num_heads: int = 2,
     use_cls_token: bool = False,
     use_linformer: bool = True,
+    floor_attn_datalane: bool = False,
     activation: str = "ReLU",
     normalization: str = "Batch",
     batch_size: int = 256,
@@ -944,6 +945,7 @@ def train(
             "num_classes": len(classes),
             "num_transformers": num_transformers,
             "use_cls_token": use_cls_token,
+            "floor_attn_datalane": floor_attn_datalane,
             "use_linformer": use_linformer,
             "dropout": dropout,
             "num_particles": num_particles,
@@ -984,6 +986,7 @@ def train(
             quantize=quantize,
             use_linformer=use_linformer,
             use_cls_token=use_cls_token,
+            floor_attn_datalane=floor_attn_datalane,
         )
 
         print("=================MODEL SUMMARY=================")
@@ -1161,6 +1164,21 @@ if __name__ == "__main__":
         default=False,
         help="Use CLS token injection and extraction (default: False)",
     )
+    # E1. The MHA scope's bc=MinMax(1,8) only reaches KBI quantizers (weights,
+    # biases, tables). Attention *activations* are KIF-typed, have no `b`, and so
+    # fall through to ic/fc defaults of MinMax(-23,23)/MinMax(-24,24) -- which let
+    # 63.3% of q_einsum_dense_iq's channels reach k+i+f <= 0 and be deleted at
+    # inference while remaining live during training (knowledge_base.md 5.8).
+    # This floors ic>=0, fc>=1 so the sum cannot reach 0. Default False keeps
+    # existing behaviour byte-for-byte, so both arms of E1 run from one commit.
+    parser.add_argument(
+        "--floor_attn_datalane",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Floor attention datalane bit-widths at ic>=0, fc>=1 so activation "
+        "channels cannot be pruned to zero bits (default: False). Raises EBOPs; "
+        "BetaPID will compensate elsewhere to hold --target_ebops.",
+    )
     parser.add_argument(
         "--use_linformer",
         action=argparse.BooleanOptionalAction,
@@ -1261,6 +1279,7 @@ if __name__ == "__main__":
         embbed_dim=args.embed_dim,
         num_heads=args.num_heads,
         use_cls_token=args.use_cls_token,
+        floor_attn_datalane=args.floor_attn_datalane,
         use_linformer=args.use_linformer,
         early_stopping_patience=args.early_stopping_patience,
         dropout=args.dropout,
