@@ -42,6 +42,7 @@ def run_standalone_evaluation(
     best_epoch: int = None,
     artifacts: list = None,
     calib_seed: int = 42,
+    train_config: dict = None,
 ):
     classes = JETCLASS_CLASSES if dataset == "jetclass" else HLS4ML_CLASSES
     current_model_dir, current_output_dir = resolve_experiment_paths(
@@ -257,6 +258,13 @@ def run_standalone_evaluation(
         "dataset": dataset,
         "calib_seed": calib_seed if quantize else None,
         "provenance": get_run_provenance(),
+        # train.py builds a 25-field config describing the whole run, but only six
+        # of those fields were ever read (to call this function) and none were
+        # persisted -- which is why archived metrics record architecture, seed and
+        # EBOPs settings nowhere. Nested rather than flattened so it cannot collide
+        # with the evaluation keys above, and so it is obvious which half is which.
+        # None for a standalone evaluation, where no training config exists.
+        "training": train_config,
     }
 
     save_final_evaluation(
