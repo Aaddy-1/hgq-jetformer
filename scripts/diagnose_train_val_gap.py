@@ -146,6 +146,80 @@ def build_split_indices(train_h5_path, x_key, y_key, max_samples, seed, val_rati
     return train_idx, val_idx
 
 
+def count_dead_channels(model):
+    """Counts quantizer parameters the inference-mode prune mask would zero.
+
+    `k+i+f <= 0` means the fixed-point format holds no bits at all, so the only
+    representable value is 0 and the channel is deleted. Read-only: iterates
+    weights, never runs a forward pass, so the `_ebops` caveat (assigned only
+    under training=True / 'tracing') is not engaged.
+    """
+    from keras import ops as kops
+
+    def walk(layer, path=""):
+        yield path or layer.name, layer
+        for sub in getattr(layer, "_layers", []) or []:
+            yield from walk(sub, f"{path or layer.name}/{sub.name}")
+
+    dead = total = 0
+    worst = []
+    for path, layer in walk(model):
+        q = getattr(layer, "quantizer", None)
+        if q is None:
+            continue
+        try:
+            k, i, f = [np.asarray(kops.convert_to_numpy(v)) for v in q.kif]
+        except Exception:
+            continue
+        s = sum(np.broadcast_arrays(k, i, f))
+        d, n = int((s <= 0).sum()), int(s.size)
+        dead += d
+        total += n
+        if d:
+            worst.append((100.0 * d / n, path.split("/")[-1], d, n))
+    worst.sort(reverse=True)
+    return dead, total, worst[:5]
+
+
+def patch_out_prune_mask():
+    """Disables the inference-only channel-zeroing so its cost can be measured.
+
+    HGQ's training and inference forward passes differ. In WRAP mode the
+    trainable quantizer returns early with rounding only
+    (fixed_point_quantizer.py:275-287), never reaching the base implementation,
+    which is what inference runs (:140-148):
+
+        ret = self.stateless_quantizer(inputs, k, i, f, training is True, ...)
+        if not training:
+            ret = ops.where(k + i + f > 0, ret, ops.zeros_like(ret))   # <-- removed here
+
+    So channels compressed to zero bits carry signal during training and are hard
+    zeros at inference. Patching the mask out makes inference use every channel
+    the training pass used, isolating how much of the train/inference accuracy gap
+    this one line accounts for -- as opposed to WRAP overflow against a frozen `i`,
+    the other divergence, which trace_minmax is what addresses.
+
+    DIAGNOSTIC ONLY. The masked model is the one that gets compiled to RTL: zero-bit
+    channels genuinely do not exist in hardware. Numbers produced under this flag
+    describe a model that cannot be synthesized and must never be reported as a
+    result.
+
+    Patching the base class covers both KBI and KIF, since both delegate to it via
+    `super().call(...)` on the inference path.
+    """
+    from keras import ops as kops
+    from hgq.quantizer.internal.fixed_point_quantizer import FixedPointQuantizerBase
+
+    def call_without_prune_mask(self, inputs, training=None):
+        k, i, f = self.kif
+        k = self.bw_mapper.bw_to_x(k, kops.shape(inputs))
+        i = self.bw_mapper.bw_to_x(i, kops.shape(inputs))
+        f = self.bw_mapper.bw_to_x(f, kops.shape(inputs))
+        return self.stateless_quantizer(inputs, k, i, f, training is True, self.seed_gen)
+
+    FixedPointQuantizerBase.call = call_without_prune_mask
+
+
 def load_rows(h5_path, x_key, y_key, indices, num_feats, chunk=2000):
     """Reads the selected rows, in ascending order.
 
@@ -214,6 +288,14 @@ def main():
         help="Apply trace_minmax WRAP calibration (default: True). --no-quantize "
         "only for unquantized checkpoints, which have nothing to calibrate.",
     )
+    parser.add_argument(
+        "--no_prune_mask",
+        action="store_true",
+        help="DIAGNOSTIC ONLY. Disable the inference-only zeroing of channels with "
+        "k+i+f <= 0, so inference uses every channel the training pass used. "
+        "Measures how much of the train/inference gap that one line accounts for. "
+        "The resulting model cannot be synthesized -- never report it as a result.",
+    )
     args = parser.parse_args()
 
     classes = JETCLASS_CLASSES if args.dataset == "jetclass" else HLS4ML_CLASSES
@@ -231,6 +313,24 @@ def main():
         loss=keras.losses.SparseCategoricalCrossentropy(from_logits=True),
         metrics=["sparse_categorical_accuracy"],
     )
+
+    # Weights-only inspection; no forward pass has run yet.
+    dead, total, worst = count_dead_channels(model)
+    print(
+        f"[Prune] {dead:,} / {total:,} quantizer params have k+i+f <= 0 "
+        f"({100.0 * dead / max(total, 1):.1f}%) -- zeroed at inference, live during training."
+    )
+    for pct, name, d, n in worst:
+        print(f"    {name:<32} {d:>6,}/{n:<6,} {pct:>5.1f}%")
+
+    if args.no_prune_mask:
+        # Before calibration and before any predict, so no forward pass has yet
+        # run under the unpatched implementation.
+        patch_out_prune_mask()
+        print(
+            "[Prune] *** MASK DISABLED (--no_prune_mask): diagnostic only. ***\n"
+            "        This model cannot be synthesized. Do not report as a result."
+        )
 
     if args.split == "test":
         x_key, y_key = detect_keys(test_h5_path)
@@ -303,6 +403,8 @@ def main():
     print(f"  split           : {args.split}")
     print(f"  samples         : {len(labels):,}")
     print(f"  calibrated      : {args.quantize} (calib_seed={args.calib_seed})")
+    print(f"  prune mask      : {'DISABLED (diagnostic)' if args.no_prune_mask else 'active (deployed behaviour)'}")
+    print(f"  dead channels   : {dead:,}/{total:,} ({100.0 * dead / max(total, 1):.1f}%)")
     print(f"  OVERALL ACCURACY: {acc:.5f}")
     print("=" * 62 + "\n")
 
