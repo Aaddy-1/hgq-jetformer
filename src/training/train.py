@@ -827,6 +827,8 @@ def run_post_training_pipeline(
         best_ebops=best_ebops,
         best_epoch=best_epoch,
         artifacts=artifacts,
+        # Persist the full training configuration, not just the six fields above.
+        train_config=config,
     )
 
 
