@@ -146,14 +146,32 @@ def build_split_indices(train_h5_path, x_key, y_key, max_samples, seed, val_rati
     return train_idx, val_idx
 
 
-def load_rows(h5_path, x_key, y_key, indices, num_feats):
-    """Reads the selected rows. h5py fancy-indexing requires ascending order;
-    x and y use the same order, so correspondence is preserved and accuracy is
-    order-independent."""
+def load_rows(h5_path, x_key, y_key, indices, num_feats, chunk=2000):
+    """Reads the selected rows, in ascending order.
+
+    The train/val indices are a permutation, so they are scattered across ~2M
+    rows. h5py fancy-indexing over that many scattered points degrades to
+    near-per-element reads and takes tens of minutes, so instead the sorted
+    indices are walked in chunks and each chunk is fetched as one contiguous
+    slice, then subset in RAM. At ~10% density a 2,000-index chunk spans ~20,000
+    rows (~174 MB at 128x17 float32), which keeps peak memory bounded while the
+    I/O stays sequential.
+
+    Order is ascending rather than the permuted order; x and y use the same
+    order, so correspondence is preserved and accuracy is order-independent.
+    """
     order = np.sort(indices)
+    xs, ys = [], []
     with h5py.File(h5_path, "r") as f:
-        x = f[x_key][order]
-        y = f[y_key][order]
+        dx, dy = f[x_key], f[y_key]
+        for i in range(0, len(order), chunk):
+            block = order[i : i + chunk]
+            lo, hi = int(block[0]), int(block[-1]) + 1
+            offs = block - lo
+            xs.append(dx[lo:hi][offs])
+            ys.append(dy[lo:hi][offs])
+    x = np.concatenate(xs, axis=0)
+    y = np.concatenate(ys, axis=0)
     if num_feats is not None and num_feats < x.shape[-1]:
         x = x[:, :, :num_feats]
     return x, y
