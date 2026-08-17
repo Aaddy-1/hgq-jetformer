@@ -26,6 +26,7 @@ Usage:
 """
 
 import os
+import re
 import sys
 import argparse
 
@@ -85,8 +86,41 @@ def classify_test_files(input_dir):
     return all_root_files, test_files
 
 
+def limit_files_per_class(test_files, n_per_class):
+    """Keeps the first n ROOT files of each class, in the original sorted order.
+
+    evaluate.py does not read the whole test set: for each class it takes a
+    contiguous `max_test_samples // n_classes` slice beginning at that class's
+    first occurrence (evaluate.py:119-127). With the default 2,000,000 that is
+    200,000 jets per class -- the class's first two 100k-jet ROOT files. So a
+    test.h5 built from the first n >= 3 files of each class yields the identical
+    slice, and therefore the identical accuracy, at a fraction of the size.
+
+    The margin matters: n must be strictly greater than 2 so that the rebuilt
+    file holds more than max_test_samples jets, keeping evaluate.py on its
+    slice-sampling branch rather than the whole-file branch, which concatenates
+    classes in a different order.
+
+    Class is taken from the filename with its trailing index stripped
+    (HToBB_120.root -> HToBB). Sorted order puts test_20M ahead of val_5M, so
+    the retained files are the same ones the full build would have placed first.
+    """
+    kept, seen = [], {}
+    for rfile in test_files:
+        cls = re.sub(r"_\d+\.root$", "", os.path.basename(rfile))
+        if seen.get(cls, 0) < n_per_class:
+            seen[cls] = seen.get(cls, 0) + 1
+            kept.append(rfile)
+    return kept, seen
+
+
 def rebuild_test_h5(
-    input_dir, num_particles=128, num_feats=17, dry_run=False, output_dir=None
+    input_dir,
+    num_particles=128,
+    num_feats=17,
+    dry_run=False,
+    output_dir=None,
+    files_per_class=0,
 ):
     if uproot is None:
         raise ImportError("uproot is required. pip install uproot awkward")
@@ -109,6 +143,21 @@ def rebuild_test_h5(
 
     all_root_files, test_files = classify_test_files(input_dir)
     print(f"[Rebuild] {len(all_root_files)} ROOT files found, {len(test_files)} classified as test")
+
+    if files_per_class > 0:
+        if files_per_class < 3:
+            print("[Rebuild] ABORT: --files_per_class must be at least 3, or the rebuilt")
+            print("[Rebuild] file holds <= max_test_samples jets and evaluate.py switches")
+            print("[Rebuild] to its whole-file branch instead of per-class slice sampling.")
+            return 1
+        test_files, per_class = limit_files_per_class(test_files, files_per_class)
+        print(
+            f"[Rebuild] SUBSET: first {files_per_class} file(s) of each of "
+            f"{len(per_class)} classes -> {len(test_files)} files"
+        )
+        odd = sorted(k for k, v in per_class.items() if v != files_per_class)
+        if odd:
+            print(f"[Rebuild] WARNING: fewer files than asked for: {', '.join(odd)}")
 
     # Guard the two files a full rebuild would have overwritten. These are always
     # checked in the canonical directory: they are what the model was normalized
@@ -139,6 +188,14 @@ def rebuild_test_h5(
         return 1
 
     print(f"[Rebuild] total test jets: {total_test_samples:,}")
+
+    if files_per_class > 0:
+        print(
+            f"[Rebuild] evaluate with --max_test_samples strictly below "
+            f"{total_test_samples:,}; at or above it evaluate.py reads the whole "
+            f"file instead of slicing per class, and the result is not comparable "
+            f"with metrics measured on the full test set."
+        )
 
     if dry_run:
         print(f"[Rebuild] dry run -- would write {tmp_h5_path} then rename to {test_h5_path}")
@@ -222,6 +279,17 @@ if __name__ == "__main__":
             "back afterwards."
         ),
     )
+    parser.add_argument(
+        "--files_per_class",
+        type=int,
+        default=0,
+        help=(
+            "Build from only the first N ROOT files of each class (minimum 3). "
+            "evaluate.py slices 200,000 contiguous jets per class from each "
+            "class's first occurrence, so N=3 reproduces the identical slice in "
+            "a ~5 GiB file instead of 41 GiB. 0 (default) builds the full set."
+        ),
+    )
     args = parser.parse_args()
 
     sys.exit(
@@ -231,5 +299,6 @@ if __name__ == "__main__":
             num_feats=args.num_feats,
             dry_run=args.dry_run,
             output_dir=args.output_dir,
+            files_per_class=args.files_per_class,
         )
     )
