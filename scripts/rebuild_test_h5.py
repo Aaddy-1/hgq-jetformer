@@ -85,23 +85,41 @@ def classify_test_files(input_dir):
     return all_root_files, test_files
 
 
-def rebuild_test_h5(input_dir, num_particles=128, num_feats=17, dry_run=False):
+def rebuild_test_h5(
+    input_dir, num_particles=128, num_feats=17, dry_run=False, output_dir=None
+):
     if uproot is None:
         raise ImportError("uproot is required. pip install uproot awkward")
 
-    output_dir = os.path.join(
+    canonical_dir = os.path.join(
         PROCESSED_DIR, "jetclass", str(num_particles), f"{num_feats}f"
     )
+    # An explicit output_dir exists so the rebuild can be written to a healthy
+    # volume when the canonical one cannot hold the file. The temp file and the
+    # final rename both stay inside output_dir, because os.rename cannot cross
+    # a filesystem boundary. Link the result back into canonical_dir afterwards.
+    relocated = output_dir is not None and os.path.abspath(
+        output_dir
+    ) != os.path.abspath(canonical_dir)
+    output_dir = output_dir or canonical_dir
+    os.makedirs(output_dir, exist_ok=True)
+
     test_h5_path = os.path.join(output_dir, "test.h5")
     tmp_h5_path = test_h5_path + ".rebuilding"
 
     all_root_files, test_files = classify_test_files(input_dir)
     print(f"[Rebuild] {len(all_root_files)} ROOT files found, {len(test_files)} classified as test")
 
-    # Guard the two files a full rebuild would have overwritten.
+    # Guard the two files a full rebuild would have overwritten. These are always
+    # checked in the canonical directory: they are what the model was normalized
+    # against, and they stay there whether or not the rebuild is relocated.
     for name in ("mean.npy", "std.npy"):
-        p = os.path.join(output_dir, name)
+        p = os.path.join(canonical_dir, name)
         print(f"[Rebuild] preserving {name}: {'present' if os.path.exists(p) else 'MISSING'}")
+
+    if relocated:
+        print(f"[Rebuild] writing to {output_dir}")
+        print(f"[Rebuild] canonical dir is {canonical_dir} -- link test.h5 back after this run")
 
     total_test_samples = 0
     unreadable = []
@@ -176,6 +194,10 @@ def rebuild_test_h5(input_dir, num_particles=128, num_feats=17, dry_run=False):
     os.rename(tmp_h5_path, test_h5_path)
     print(f"[Rebuild] wrote {write_idx:,} jets to {test_h5_path}")
     print("[Rebuild] train_part*.h5, mean.npy and std.npy were not modified.")
+    if relocated:
+        canonical_test = os.path.join(canonical_dir, "test.h5")
+        print("[Rebuild] to put it where the training code looks for it:")
+        print(f"[Rebuild]     ln -sfn {test_h5_path} {canonical_test}")
     return 0
 
 
@@ -189,6 +211,17 @@ if __name__ == "__main__":
         action="store_true",
         help="Classify files and count jets without writing anything",
     )
+    parser.add_argument(
+        "-o",
+        "--output_dir",
+        type=str,
+        default=None,
+        help=(
+            "Write test.h5 here instead of data/processed/jetclass/<P>/<F>f/. "
+            "Use when the canonical volume cannot hold the file; link the result "
+            "back afterwards."
+        ),
+    )
     args = parser.parse_args()
 
     sys.exit(
@@ -197,5 +230,6 @@ if __name__ == "__main__":
             num_particles=args.num_particles,
             num_feats=args.num_feats,
             dry_run=args.dry_run,
+            output_dir=args.output_dir,
         )
     )
