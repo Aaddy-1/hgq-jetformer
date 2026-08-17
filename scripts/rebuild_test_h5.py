@@ -15,6 +15,11 @@ mean.npy or std.npy, and never deletes a ROOT file.
 Writes to test.h5.rebuilding and renames only on success, so a failed or
 interrupted run cannot leave a half-written file where the dataset should be.
 
+The entry count is read from each tree's header, which does NOT prove the file's
+data baskets are readable -- a ROOT file damaged by storage failure can report
+num_entries fine and then raise OSError mid-conversion. Verify the source files
+independently (`dd if=<file> of=/dev/null`) before trusting a rebuild.
+
 Usage:
     python -m scripts.rebuild_test_h5 --input_dir datasets/JetClass/Pythia
     python -m scripts.rebuild_test_h5 --dry_run          # list what it would do
