@@ -86,6 +86,51 @@ def classify_test_files(input_dir):
     return all_root_files, test_files
 
 
+def load_exclusions(path):
+    """Basenames of ROOT files to skip, one per line. Blank lines and # ignored.
+
+    Storage failure damages individual ROOT files, not whole classes: a file can
+    report its entry count from the tree header and still raise OSError when a
+    data basket is read (see the note in build_jetclass_dataset). Excluding the
+    known-bad files before per-class selection lets the rebuild fall through to
+    the next readable file of that class instead of aborting mid-write.
+    """
+    if not path:
+        return set()
+    excluded = set()
+    with open(path) as fh:
+        for line in fh:
+            line = line.strip()
+            if line and not line.startswith("#"):
+                excluded.add(os.path.basename(line))
+    return excluded
+
+
+def report_slice_impact(test_files, excluded):
+    """Warns when an excluded file held jets evaluate.py would actually score.
+
+    evaluate.py reads the first 200,000 jets of each class at the default
+    max_test_samples, i.e. that class's first two files. Excluding a file at
+    position 3 or later is invisible to the measurement; excluding one at
+    position 1 or 2 shifts the class's evaluated jets to a different sample,
+    which is a provenance change and must not pass silently.
+    """
+    position = {}
+    shifted = []
+    for rfile in test_files:
+        cls = re.sub(r"_\d+\.root$", "", os.path.basename(rfile))
+        position[cls] = position.get(cls, 0) + 1
+        if os.path.basename(rfile) in excluded and position[cls] <= 2:
+            shifted.append((os.path.basename(rfile), cls, position[cls]))
+    for fname, cls, pos in shifted:
+        print(
+            f"[Rebuild] WARNING: {fname} is file #{pos} of class {cls}, inside the "
+            f"200,000 jets evaluate.py scores. That class will be measured on a "
+            f"DIFFERENT sample than a build from the intact files."
+        )
+    return shifted
+
+
 def limit_files_per_class(test_files, n_per_class):
     """Keeps the first n ROOT files of each class, in the original sorted order.
 
@@ -121,6 +166,7 @@ def rebuild_test_h5(
     dry_run=False,
     output_dir=None,
     files_per_class=0,
+    exclude_files=None,
 ):
     if uproot is None:
         raise ImportError("uproot is required. pip install uproot awkward")
@@ -143,6 +189,19 @@ def rebuild_test_h5(
 
     all_root_files, test_files = classify_test_files(input_dir)
     print(f"[Rebuild] {len(all_root_files)} ROOT files found, {len(test_files)} classified as test")
+
+    # Exclusion runs before per-class selection so that --files_per_class keeps
+    # the first N *readable* files of each class rather than the first N overall.
+    excluded = load_exclusions(exclude_files)
+    if excluded:
+        report_slice_impact(test_files, excluded)
+        present = {os.path.basename(f) for f in test_files}
+        unmatched = sorted(excluded - present)
+        if unmatched:
+            print(f"[Rebuild] WARNING: not in the test set, ignored: {', '.join(unmatched)}")
+        before = len(test_files)
+        test_files = [f for f in test_files if os.path.basename(f) not in excluded]
+        print(f"[Rebuild] EXCLUDED {before - len(test_files)} file(s) listed in {exclude_files}")
 
     if files_per_class > 0:
         if files_per_class < 3:
@@ -290,6 +349,16 @@ if __name__ == "__main__":
             "a ~5 GiB file instead of 41 GiB. 0 (default) builds the full set."
         ),
     )
+    parser.add_argument(
+        "--exclude_files",
+        type=str,
+        default=None,
+        help=(
+            "Path to a text file listing ROOT filenames to skip, one per line. "
+            "Applied before --files_per_class, so selection falls through to the "
+            "next readable file of that class. Use for files that fail to read."
+        ),
+    )
     args = parser.parse_args()
 
     sys.exit(
@@ -300,5 +369,6 @@ if __name__ == "__main__":
             dry_run=args.dry_run,
             output_dir=args.output_dir,
             files_per_class=args.files_per_class,
+            exclude_files=args.exclude_files,
         )
     )
