@@ -842,6 +842,7 @@ def train(
     num_transformers: int = 1,
     embbed_dim: int = 32,
     num_heads: int = 2,
+    proj_dim_k: int = 2,
     use_cls_token: bool = False,
     use_linformer: bool = True,
     floor_attn_datalane: bool = False,
@@ -942,6 +943,7 @@ def train(
             "in_dim": num_feats,
             "embed_dim": embbed_dim,
             "num_heads": num_heads,
+            "proj_dim_k": proj_dim_k,
             "num_classes": len(classes),
             "num_transformers": num_transformers,
             "use_cls_token": use_cls_token,
@@ -977,6 +979,7 @@ def train(
             in_dim=num_feats,
             embed_dim=embbed_dim,
             num_heads=num_heads,
+            proj_dim_k=proj_dim_k,
             num_classes=len(classes),
             num_transformers=num_transformers,
             dropout=dropout,
@@ -1185,6 +1188,27 @@ if __name__ == "__main__":
         default=True,
         help="Use QLinformerAttention instead of standard QMultiHeadAttention (default: True)",
     )
+    # A1. The Linformer's summary-slot count. E and F are (num_particles, k) matrices that
+    # contract the particle axis, so the whole jet is squashed into k vectors before any
+    # particle attends to it. Hard-coded at 2 since the architecture was written, never swept.
+    # On E4_EMBED16_SEED42, 86.9% of the attention block's EBOPs sit in its two *per-particle*
+    # projections (query, attention_output) while the entire cross-particle path is 4.4% of
+    # the model -- so k is unusually cheap to raise. Two arms of interest:
+    #   k=1  softmax over a single element is identically 1.0, so every particle receives the
+    #        same vector: attention degenerates to a global-context broadcast (DeepSets), and
+    #        query_dense stops influencing the loss, freeing its budget on its own.
+    #   k=8  4x the mixing rank, which BetaPID pays for out of the position-wise budget.
+    # Default 2 keeps existing behaviour byte-for-byte, so E4_EMBED16_SEED42/43/44 stay a
+    # valid n=3 control and both arms run from one commit.
+    parser.add_argument(
+        "--proj_dim_k",
+        type=int,
+        default=2,
+        help="Linformer key/value projection dimension k: the number of summary slots the "
+        "particles are compressed to before attention (default: 2). Requires --quantize and "
+        "--use_linformer; the unquantized path builds a standard MultiHeadAttention "
+        "(transformer.py:125-132) and ignores this.",
+    )
     parser.add_argument(
         "--max_test_samples",
         type=int,
@@ -1278,6 +1302,7 @@ if __name__ == "__main__":
         num_transformers=args.num_transformers,
         embbed_dim=args.embed_dim,
         num_heads=args.num_heads,
+        proj_dim_k=args.proj_dim_k,
         use_cls_token=args.use_cls_token,
         floor_attn_datalane=args.floor_attn_datalane,
         use_linformer=args.use_linformer,
