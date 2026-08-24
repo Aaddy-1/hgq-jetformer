@@ -53,11 +53,19 @@ CROPS = [8, 16, 24, 32, 48, 64, 96, 128]
 
 
 def load(h5_path, max_samples):
+    """Stride the whole file uniformly rather than taking a prefix.
+
+    The h5 is written class by class, so `[:max_samples]` returns a single
+    class: every multiplicity statistic below silently becomes that one class's
+    and Q3 collapses to a single row. Striding by total//max_samples reads the
+    same number of jets at the same cost but covers all ten classes evenly.
+    """
     with h5py.File(h5_path, "r") as f:
-        n = min(max_samples, f["particle_features"].shape[0])
-        x = f["particle_features"][:n]
-        y = f["label"][:n]
-    return x, y
+        total = f["particle_features"].shape[0]
+        step = max(1, total // max_samples)
+        x = f["particle_features"][::step][:max_samples]
+        y = f["label"][::step][:max_samples]
+    return x, y, total, step
 
 
 def main():
@@ -71,9 +79,21 @@ def main():
 
     h5_path = args.h5 or os.path.join(PROCESSED_DIR, "jetclass", "128", "17f", "test.h5")
     print(f"reading {h5_path}")
-    x, y = load(h5_path, args.max_samples)
+    x, y, total, step = load(h5_path, args.max_samples)
     n_jets, n_part, n_feat = x.shape
-    print(f"{n_jets:,} jets x {n_part} particles x {n_feat} features (raw, unnormalized)\n")
+    print(f"{n_jets:,} jets x {n_part} particles x {n_feat} features (raw, unnormalized)")
+    print(f"sampled every {step} of {total:,} rows\n")
+
+    # The h5 is class-ordered, so confirm the stride actually spanned it. A
+    # sample missing classes makes Q2/Q3 that subset's statistics, not JetClass's.
+    counts = [int((y == i).sum()) for i in range(len(JETCLASS_CLASSES))]
+    print("  class coverage: " +
+          "  ".join(f"{n}={c:,}" for n, c in zip(JETCLASS_CLASSES, counts)))
+    missing = [n for n, c in zip(JETCLASS_CLASSES, counts) if c == 0]
+    if missing:
+        print(f"  WARNING: no jets for {', '.join(missing)} -- Q2/Q3 below are "
+              f"NOT representative. Raise --max_samples.")
+    print()
 
     mask = x[:, :, MASK_COLS].sum(axis=2) > 0.5          # (N, 128) exact real-particle mask
     mult = mask.sum(axis=1)                              # (N,) constituents per jet
