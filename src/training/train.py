@@ -28,6 +28,7 @@ from src.data.dataset import (
     get_stratified_indices,
 )
 from src.model.jetformer import build_hgq_jetformer
+from src.model.pooling import particle_mask_threshold
 from src.training.onecyclelr import OneCycleLR, build_lr_schedule
 from src.training.callbacks import (
     QATEarlyStoppingAndCheckpoint,
@@ -217,6 +218,28 @@ def extract_model_metadata(
     return metadata
 
 
+def resolve_base_path(num_particles, num_feats, dataset):
+    """The dataset directory a run reads: shards, test.h5, mean.npy and std.npy.
+
+    Extracted so that --rich_pool can read the same mean/std the generators
+    normalize with. Copying the stats between particle counts would be a silent
+    correctness bug: compute_welford_stats flattens over the particle axis
+    (build_jetclass_dataset.py:155), so the padded fraction enters the numbers
+    and they differ materially between a 128 tree (~69% padding) and a 64 tree
+    (~39%) -- measured max|dstd| = 0.2415, ~39% relative.
+    """
+    if dataset == "jetclass":
+        base_path = os.path.join(
+            PROCESSED_DIR, "jetclass", str(num_particles), f"{num_feats}f"
+        )
+        if not os.path.exists(base_path):
+            base_path = os.path.join(
+                PROCESSED_DIR, "jetclass", str(num_particles), "17f"
+            )
+        return base_path
+    return os.path.join(PROCESSED_DIR, str(num_particles), f"{num_feats}f")
+
+
 def setup_data_generators(
     num_particles,
     num_feats,
@@ -230,15 +253,8 @@ def setup_data_generators(
     augment_rotation=False,
     seed=42,
 ):
+    base_path = resolve_base_path(num_particles, num_feats, dataset)
     if dataset == "jetclass":
-        base_path = os.path.join(
-            PROCESSED_DIR, "jetclass", str(num_particles), f"{num_feats}f"
-        )
-        if not os.path.exists(base_path):
-            base_path = os.path.join(
-                PROCESSED_DIR, "jetclass", str(num_particles), "17f"
-            )
-
         # Find train_part*.h5 files or fallback to train.h5
         if train_parts is not None:
             train_h5_paths = [
@@ -254,7 +270,6 @@ def setup_data_generators(
             else:
                 train_h5_paths = [os.path.join(base_path, "train.h5")]
     else:
-        base_path = os.path.join(PROCESSED_DIR, str(num_particles), f"{num_feats}f")
         train_h5_paths = [os.path.join(base_path, "train.h5")]
 
     test_h5_path = os.path.join(base_path, "test.h5")
@@ -846,6 +861,8 @@ def train(
     use_cls_token: bool = False,
     use_linformer: bool = True,
     floor_attn_datalane: bool = False,
+    rich_pool: bool = False,
+    head_width: int = None,
     activation: str = "ReLU",
     normalization: str = "Batch",
     batch_size: int = 256,
@@ -887,6 +904,27 @@ def train(
         augment_rotation=augment_rotation,
         seed=seed,
     )
+
+    # [B1] The padding mask is derived inside the graph from the five particle-type
+    # one-hot columns, but the threshold that separates a real row from a padded one
+    # depends on the normalization constants (pooling.py:particle_mask_threshold).
+    # Read them from the SAME directory the generators normalize with -- never a
+    # copy, and never the 128 tree's stats for a 64 run.
+    mask_threshold = None
+    if rich_pool:
+        stats_dir = resolve_base_path(num_particles, num_feats, dataset)
+        mean_path = os.path.join(stats_dir, "mean.npy")
+        std_path = os.path.join(stats_dir, "std.npy")
+        if not (os.path.exists(mean_path) and os.path.exists(std_path)):
+            raise FileNotFoundError(
+                f"--rich_pool needs mean.npy/std.npy in {stats_dir}; run "
+                f"scripts/derive_cropped_dataset.py (or the builder) for this "
+                f"particle count first."
+            )
+        mask_threshold = particle_mask_threshold(
+            np.load(mean_path), np.load(std_path)
+        )
+        print(f"[B1] rich_pool mask threshold = {mask_threshold:.6f}  (from {stats_dir})")
 
     current_model_dir, current_output_dir = resolve_experiment_paths(
         experiment, quantize
@@ -949,6 +987,9 @@ def train(
             "use_cls_token": use_cls_token,
             "floor_attn_datalane": floor_attn_datalane,
             "use_linformer": use_linformer,
+            "rich_pool": rich_pool,
+            "head_width": head_width,
+            "mask_threshold": mask_threshold,
             "dropout": dropout,
             "num_particles": num_particles,
             "activation": activation,
@@ -990,6 +1031,9 @@ def train(
             use_linformer=use_linformer,
             use_cls_token=use_cls_token,
             floor_attn_datalane=floor_attn_datalane,
+            rich_pool=rich_pool,
+            head_width=head_width,
+            mask_threshold=mask_threshold,
         )
 
         print("=================MODEL SUMMARY=================")
@@ -1188,6 +1232,40 @@ if __name__ == "__main__":
         default=True,
         help="Use QLinformerAttention instead of standard QMultiHeadAttention (default: True)",
     )
+    # B1/B2. The aggregation step and the classifier, the two places nothing has
+    # ever been varied. On E4_EMBED16_SEED42 the head is 416 MACs of ~240,600
+    # (0.17%) and the pool is a single unmasked mean over all 128 slots -- while
+    # 93.8% of the budget goes to per-particle maps that are multiplied by the
+    # token count. C1_CROP64_SEED42 then showed accuracy +1.47 pts with macro AUC
+    # +0.0014, i.e. the separability was already there and the decision network
+    # could not use it. Post-pool MACs run once per jet rather than once per
+    # particle, so this is the cheapest capacity in the model by num_particles.
+    #
+    # Two flags rather than one so the halves can be attributed: --rich_pool
+    # widens what reaches the head, --head_width widens the head itself, and
+    # neither is much use alone. Both default off, so C1_CROP64_SEED42 and
+    # E4_EMBED16_SEED42/43/44 remain valid controls.
+    parser.add_argument(
+        "--rich_pool",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Replace GlobalAveragePooling1D with masked [sum | max | mean | n] "
+        "pooling, widening the bottleneck from embed_dim to 3*embed_dim+1 "
+        "(default: False). Max is comparators and sum is adders, so the width "
+        "is near-free in EBOPs. Requires the 17-feature JetClass layout and "
+        "mean.npy/std.npy in the run's dataset directory, since the padding "
+        "mask threshold is derived from them.",
+    )
+    parser.add_argument(
+        "--head_width",
+        type=int,
+        default=None,
+        help="Width of the post-pool classifier: N -> N -> num_classes instead "
+        "of the default embed_dim -> embed_dim -> num_classes (default: None, "
+        "unchanged). At N=64 with --rich_pool this is ~7,872 MACs against the "
+        "current 416, roughly 3.4%% of the 350k budget for ~19x the classifier; "
+        "BetaPID pays for it out of the per-particle maps.",
+    )
     # A1. The Linformer's summary-slot count. E and F are (num_particles, k) matrices that
     # contract the particle axis, so the whole jet is squashed into k vectors before any
     # particle attends to it. Hard-coded at 2 since the architecture was written, never swept.
@@ -1306,6 +1384,8 @@ if __name__ == "__main__":
         use_cls_token=args.use_cls_token,
         floor_attn_datalane=args.floor_attn_datalane,
         use_linformer=args.use_linformer,
+        rich_pool=args.rich_pool,
+        head_width=args.head_width,
         early_stopping_patience=args.early_stopping_patience,
         dropout=args.dropout,
         val_ratio=0.1,

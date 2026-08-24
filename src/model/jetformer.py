@@ -6,6 +6,7 @@ from hgq.layers import QBatchNormalization, Quantizer, QDense
 # Assuming imports from your architecture definitions:
 from .layers.embedding import apply_hgq_embedding
 from .layers.transformer import apply_hgq_transformer_block
+from .pooling import DEFAULT_MASK_COLS, apply_rich_pooling
 
 from hgq.layers import Quantizer
 from keras import ops
@@ -54,6 +55,10 @@ def build_hgq_jetformer(
     use_linformer=True,
     use_cls_token=False,
     floor_attn_datalane=False,
+    rich_pool=False,
+    head_width=None,
+    mask_cols=DEFAULT_MASK_COLS,
+    mask_threshold=None,
 ):
     # 1. Explicit Input Definition
     inputs = keras.Input(shape=(num_particles, in_dim), name="input_particles")
@@ -108,30 +113,71 @@ def build_hgq_jetformer(
         )
 
     # 5. Aggregation
+    #
+    # [B1] --rich_pool replaces the single mean with [sum | max | mean | n],
+    # masked against padding. See pooling.py for why the mask is bundled with it
+    # and why n has to be handed back explicitly. Mutually exclusive with the
+    # CLS token, which is a different aggregation strategy entirely (it reads
+    # one slot rather than reducing over them, so there is nothing to mask).
     if use_cls_token:
+        if rich_pool:
+            raise ValueError(
+                "--rich_pool and use_cls_token are two different aggregation "
+                "strategies; enable at most one."
+            )
         raw_slice = x[:, 0, :]
         pooled = keras.layers.Activation("linear", name="extract_cls")(raw_slice)
+    elif rich_pool:
+        pooled = apply_rich_pooling(
+            x,
+            inputs,
+            num_particles=num_particles,
+            mask_cols=mask_cols,
+            mask_threshold=mask_threshold,
+        )
     else:
         pooled = keras.layers.GlobalAveragePooling1D(name="linformer_pool")(x)
 
     # 6. Dense Projection & Classifier Head
+    #
+    # [B2] --head_width N widens this from embed_dim -> embed_dim -> num_classes
+    # to N -> N -> num_classes. Everything here runs ONCE per jet, whereas every
+    # layer above runs once per particle, so a multiply here costs 1/num_particles
+    # of a multiply there. Measured on E4_EMBED16_SEED42 the default head is 416
+    # MACs of ~240,600 in the model -- 0.17% -- which is why this is the cheapest
+    # capacity available and why it had never been worth flagging until the
+    # particle axis came down.
     from .initializers import get_parity_initializer
 
-    parity_initializer = get_parity_initializer()
     dense_cls = QDense if quantize else keras.layers.Dense
+    hidden_units = embed_dim if head_width is None else head_width
 
+    # parity_initializer must stay per-layer (CLAUDE.md): a single shared object
+    # breaks Keras graph generation and hardware compilation.
     embed_dense = dense_cls(
-        embed_dim,
-        kernel_initializer=parity_initializer,
+        hidden_units,
+        kernel_initializer=get_parity_initializer(),
         name="embed_dense",
     )(pooled)
 
     if quantize:
         embed_dense = Quantizer(name="embed_dense_quantizer")(embed_dense)
 
+    # The second hidden layer exists only under --head_width. With the flag off
+    # this branch is skipped and the graph is byte-for-byte the previous one, so
+    # E4_EMBED16_SEED42/43/44 and C1_CROP64_SEED42 stay valid controls.
+    if head_width is not None:
+        embed_dense = dense_cls(
+            hidden_units,
+            kernel_initializer=get_parity_initializer(),
+            name="head_dense_2",
+        )(embed_dense)
+        if quantize:
+            embed_dense = Quantizer(name="head_dense_2_quantizer")(embed_dense)
+
     logits = dense_cls(
         num_classes,
-        kernel_initializer=parity_initializer,
+        kernel_initializer=get_parity_initializer(),
         name="classifier_head",
     )(embed_dense)
 
