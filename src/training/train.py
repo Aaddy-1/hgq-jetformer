@@ -28,6 +28,7 @@ from src.data.dataset import (
     get_stratified_indices,
 )
 from src.model.jetformer import build_hgq_jetformer
+from src.training.prune_mask_ste import patch_prune_mask_with_ste
 from src.training.onecyclelr import OneCycleLR, build_lr_schedule
 from src.training.callbacks import (
     QATEarlyStoppingAndCheckpoint,
@@ -846,6 +847,7 @@ def train(
     use_cls_token: bool = False,
     use_linformer: bool = True,
     floor_attn_datalane: bool = False,
+    ste_prune_mask: bool = False,
     activation: str = "ReLU",
     normalization: str = "Batch",
     batch_size: int = 256,
@@ -914,6 +916,16 @@ def train(
 
     optimizer = keras.optimizers.AdamW(learning_rate=1e-3)
 
+    # Applied before the model is built, so every quantizer is constructed against
+    # the patched class. Inside the `quantize` guard by construction, so the
+    # unquantized path is untouched. See src/training/prune_mask_ste.py.
+    if quantize and ste_prune_mask:
+        patch_prune_mask_with_ste()
+        print(
+            "[STE] Prune mask ACTIVE during training, behind a straight-through "
+            "estimator (--ste_prune_mask)."
+        )
+
     # --- Quantizer & Layer Scopes ---
     # Quantized path: separate kernel (weights) and datalane (activations) scopes
     # matching the reference sub-microsecond transformers notebook.
@@ -948,6 +960,7 @@ def train(
             "num_transformers": num_transformers,
             "use_cls_token": use_cls_token,
             "floor_attn_datalane": floor_attn_datalane,
+            "ste_prune_mask": ste_prune_mask,
             "use_linformer": use_linformer,
             "dropout": dropout,
             "num_particles": num_particles,
@@ -1182,6 +1195,23 @@ if __name__ == "__main__":
         "channels cannot be pruned to zero bits (default: False). Raises EBOPs; "
         "BetaPID will compensate elsewhere to hold --target_ebops.",
     )
+    # The mask that deletes k+i+f <= 0 channels fires only at inference, so those
+    # channels are live for all of fit() and hard zeros at evaluation -- the
+    # measured cause of the train/val divergence (.agents/DEMO_MASK_{ON,OFF}).
+    # This applies it during training too, behind a straight-through estimator so
+    # a pruned channel keeps the gradient that lets its bit-width recover; a hard
+    # gate would make k+i+f <= 0 absorbing. Unlike --floor_attn_datalane, which
+    # forbids pruning and pays the EBOPs, this permits it and makes the optimizer
+    # face the consequence. Default False keeps existing behaviour byte-for-byte.
+    parser.add_argument(
+        "--ste_prune_mask",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Apply HGQ's zero-bit prune mask during training behind a "
+        "straight-through estimator, so training and inference score the same "
+        "function while pruned channels keep a recoverable gradient "
+        "(default: False).",
+    )
     parser.add_argument(
         "--use_linformer",
         action=argparse.BooleanOptionalAction,
@@ -1305,6 +1335,7 @@ if __name__ == "__main__":
         proj_dim_k=args.proj_dim_k,
         use_cls_token=args.use_cls_token,
         floor_attn_datalane=args.floor_attn_datalane,
+        ste_prune_mask=args.ste_prune_mask,
         use_linformer=args.use_linformer,
         early_stopping_patience=args.early_stopping_patience,
         dropout=args.dropout,
