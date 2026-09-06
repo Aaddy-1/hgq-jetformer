@@ -30,6 +30,7 @@ Read-only. Writes nothing.
 Usage:
     python scripts/particle_multiplicity.py                       # default paths
     python scripts/particle_multiplicity.py --h5 <path> --max_samples 200000
+    python scripts/particle_multiplicity.py --dump out.npz        # + arrays for plotting
 """
 
 import argparse
@@ -68,6 +69,49 @@ def load(h5_path, max_samples):
     return x, y, total, step
 
 
+def dump_arrays(path, mult, ptfrac, y, h5_path, total, step, frac_sorted, pair_frac):
+    """Write what a plot needs, at every cut rather than only the CROPS rows.
+
+    The console tables above sample eight crop values; a cumulative-retention
+    curve needs all of them, so `retention_*` is indexed by cut 0..128 with
+    column c holding the leading-c result (column 0 is the empty crop). Per-class
+    rows are included so a class breakdown never costs a second pass over the h5.
+    """
+    total_pt = ptfrac.sum(axis=1)
+    cum = np.cumsum(ptfrac, axis=1)
+    r = np.divide(cum, total_pt[:, None], out=np.ones_like(cum), where=total_pt[:, None] > 0)
+    r = np.concatenate([np.zeros((r.shape[0], 1), dtype=r.dtype), r], axis=1)   # (N, 129)
+
+    n_cls = len(JETCLASS_CLASSES)
+    mult_hist_by_class = np.zeros((n_cls, 129), dtype=np.int64)
+    retention_by_class = np.zeros((n_cls, 129), dtype=np.float64)
+    for i in range(n_cls):
+        sel = y == i
+        if not sel.any():
+            continue
+        mult_hist_by_class[i] = np.bincount(mult[sel], minlength=129)[:129]
+        retention_by_class[i] = r[sel].mean(axis=0)
+
+    np.savez_compressed(
+        path,
+        mult=mult.astype(np.int16),
+        label=y.astype(np.int8),
+        mult_hist=np.bincount(mult, minlength=129)[:129],
+        mult_hist_by_class=mult_hist_by_class,
+        retention_mean=r.mean(axis=0),
+        retention_p1=np.percentile(r, 1, axis=0),
+        retention_p5=np.percentile(r, 5, axis=0),
+        retention_by_class=retention_by_class,
+        classes=np.array(JETCLASS_CLASSES),
+        source_h5=np.array(h5_path),
+        total_rows=np.array(total),
+        stride=np.array(step),
+        frac_jets_sorted=np.array(frac_sorted),
+        frac_pairs_sorted=np.array(pair_frac),
+    )
+    print(f"wrote {path}")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -75,6 +119,8 @@ def main():
                    help="path to a 128-particle h5 (default: jetclass/128/17f/test.h5)")
     p.add_argument("--max_samples", type=int, default=200000,
                    help="samples to read (default: 200,000 — plenty for these statistics)")
+    p.add_argument("--dump", type=str, default=None,
+                   help="also write the underlying arrays to this .npz, for plotting")
     args = p.parse_args()
 
     h5_path = args.h5 or os.path.join(PROCESSED_DIR, "jetclass", "128", "17f", "test.h5")
@@ -161,6 +207,11 @@ def main():
     print("\n  pT@N = mean fraction of jet pT retained in the leading N constituents.")
     print("  Compare the weakest classes (H_4q, t_bqq, H_gg) against QCD: if they")
     print("  lose materially more, the crop is a worse trade than the average shows.")
+
+    if args.dump:
+        print()
+        dump_arrays(args.dump, mult, ptfrac, y, h5_path, total, step,
+                    frac_sorted, pair_ok / pairs)
 
 
 if __name__ == "__main__":
