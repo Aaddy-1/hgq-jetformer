@@ -1,0 +1,120 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2026 Advanced Micro Devices, Inc. All Rights Reserved.
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version      : Vivado v.2025.2.1 (lin64) Build 6403652 Thu Mar 19 13:47:00 MDT 2026
+| Date              : Wed Aug 19 16:14:59 2026
+| Host              : ccgpu5 running 64-bit Ubuntu 20.04.6 LTS
+| Command           : report_timing -sort_by group -max_paths 100 -path_type summary -file /mnt/ccnas2/bdp/as8625/hgq-jetformer/experiment/E4_EMBED16_SEED42/models/alkaid/output_model/reports/model_post_route_timing_paths.rpt
+| Design            : model
+| Device            : xcvu13p-flga2577
+| Speed File        : -2  PRODUCTION 1.28 03-30-2022
+| Design State      : Routed
+| Temperature Grade : E
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Timing Report
+
+Startpoint                     Endpoint                       Slack(ns)     
+----------------------------------------------------------------------------
+stage12_inp_reg[27560]/C       stage13_inp_reg[24201]/D       -1.716        
+stage12_inp_reg[27560]/C       stage13_inp_reg[24202]/D       -1.700        
+stage11_inp_reg[27817]/C       stage12_inp_reg[28549]/D       -1.647        
+stage9_inp_reg[13488]/C        stage10_inp_reg[17649]/D       -1.645        
+stage12_inp_reg[20868]/C       stage13_inp_reg[19234]/D       -1.631        
+stage12_inp_reg[20868]/C       stage13_inp_reg[19235]/D       -1.622        
+stage11_inp_reg[32062]/C       stage12_inp_reg[8977]/D        -1.622        
+stage12_inp_reg[27560]/C       stage13_inp_reg[23029]/D       -1.602        
+stage9_inp_reg[11464]/C        stage10_inp_reg[30737]/D       -1.583        
+stage9_inp_reg[13430]/C        stage10_inp_reg[18329]/D       -1.581        
+stage9_inp_reg[13670]/C        stage10_inp_reg[21715]/D       -1.575        
+stage12_inp_reg[27560]/C       stage13_inp_reg[23030]/D       -1.571        
+stage13_inp_reg[10103]/C       stage14_inp_reg[10188]/D       -1.570        
+stage9_inp_reg[13674]/C        stage10_inp_reg[21735]/D       -1.547        
+stage7_inp_reg[18856]/C        stage8_inp_reg[17599]/D        -1.542        
+stage11_inp_reg[23592]/C       stage12_inp_reg[20885]/D       -1.536        
+stage1_inp_reg[36877]/C        stage2_inp_reg[42083]/D        -1.535        
+stage12_inp_reg[16184]/C       stage13_inp_reg[15369]/D       -1.530        
+stage9_inp_reg[13488]/C        stage10_inp_reg[17560]/D       -1.529        
+stage7_inp_reg[18856]/C        stage8_inp_reg[17600]/D        -1.527        
+stage11_inp_reg[23592]/C       stage12_inp_reg[20884]/D       -1.517        
+stage12_inp_reg[20868]/C       stage13_inp_reg[19233]/D       -1.493        
+stage11_inp_reg[34003]/C       stage12_inp_reg[28921]/D       -1.489        
+stage9_inp_reg[13529]/C        stage10_inp_reg[17691]/D       -1.487        
+stage1_inp_reg[25862]/C        stage2_inp_reg[44340]/D        -1.478        
+stage9_inp_reg[13529]/C        stage10_inp_reg[17692]/D       -1.478        
+stage1_inp_reg[21614]/C        stage2_inp_reg[44456]/D        -1.477        
+stage11_inp_reg[29410]/C       stage12_inp_reg[21124]/D       -1.474        
+stage1_inp_reg[25862]/C        stage2_inp_reg[44339]/D        -1.473        
+stage9_inp_reg[13678]/C        stage10_inp_reg[19848]/D       -1.473        
+stage12_inp_reg[24581]/C       stage13_inp_reg[23215]/D       -1.471        
+stage11_inp_reg[34003]/C       stage12_inp_reg[28922]/D       -1.470        
+stage12_inp_reg[20868]/C       stage13_inp_reg[19275]/D       -1.470        
+stage7_inp_reg[18856]/C        stage8_inp_reg[17598]/D        -1.466        
+stage2_inp_reg[37145]/C        stage3_inp_reg[31896]/D        -1.463        
+stage9_inp_reg[13488]/C        stage10_inp_reg[17561]/D       -1.460        
+stage11_inp_reg[23262]/C       stage12_inp_reg[33138]/D       -1.460        
+stage12_inp_reg[24581]/C       stage13_inp_reg[23218]/D       -1.459        
+stage7_inp_reg[18282]/C        stage8_inp_reg[17137]/D        -1.458        
+stage1_inp_reg[18370]/C        stage10_inp_reg[7580]_srl9/D   -1.458        
+stage11_inp_reg[29410]/C       stage12_inp_reg[21125]/D       -1.457        
+stage11_inp_reg[23262]/C       stage12_inp_reg[33140]/D       -1.456        
+stage9_inp_reg[13586]/C        stage10_inp_reg[20746]/D       -1.456        
+stage9_inp_reg[13529]/C        stage10_inp_reg[17693]/D       -1.455        
+stage0_inp_reg[9091]/C         stage10_inp_reg[410]_srl10/D   -1.454        
+stage1_inp_reg[21614]/C        stage2_inp_reg[44457]/D        -1.454        
+stage11_inp_reg[18353]/C       stage12_inp_reg[20791]/D       -1.453        
+stage12_inp_reg[24581]/C       stage13_inp_reg[23214]/D       -1.453        
+stage12_inp_reg[24581]/C       stage13_inp_reg[23217]/D       -1.452        
+stage1_inp_reg[25862]/C        stage2_inp_reg[44335]/D        -1.452        
+stage12_inp_reg[18800]/C       stage13_inp_reg[16761]/D       -1.451        
+stage1_inp_reg[21614]/C        stage2_inp_reg[44455]/D        -1.451        
+stage12_inp_reg[27088]/C       stage13_inp_reg[22839]/D       -1.449        
+stage12_inp_reg[17078]/C       stage13_inp_reg[23741]/D       -1.449        
+stage7_inp_reg[18856]/C        stage8_inp_reg[17907]/D        -1.444        
+stage1_inp_reg[2517]/C         stage2_inp_reg[40169]/D        -1.443        
+stage11_inp_reg[23262]/C       stage12_inp_reg[33139]/D       -1.443        
+stage12_inp_reg[24581]/C       stage13_inp_reg[23216]/D       -1.442        
+stage1_inp_reg[27810]/C        stage2_inp_reg[46874]/D        -1.440        
+stage12_inp_reg[16184]/C       stage13_inp_reg[15368]/D       -1.439        
+stage12_inp_reg[18800]/C       stage13_inp_reg[16760]/D       -1.439        
+stage1_inp_reg[18370]/C        stage2_inp_reg[45489]/D        -1.437        
+stage6_inp_reg[17699]/C        stage7_inp_reg[19131]/D        -1.435        
+stage1_inp_reg[36877]/C        stage2_inp_reg[42082]/D        -1.434        
+stage12_inp_reg[25584]/C       stage13_inp_reg[13426]/D       -1.432        
+stage0_inp_reg[9091]/C         stage10_inp_reg[411]_srl10/D   -1.431        
+stage12_inp_reg[25584]/C       stage13_inp_reg[12861]/D       -1.430        
+stage2_inp_reg[27603]/C        stage3_inp_reg[20205]/D        -1.430        
+stage9_inp_reg[13670]/C        stage10_inp_reg[21748]/D       -1.429        
+stage1_inp_reg[12239]/C        stage2_inp_reg[38804]/D        -1.425        
+stage9_inp_reg[13529]/C        stage10_inp_reg[17694]/D       -1.424        
+stage12_inp_reg[18800]/C       stage13_inp_reg[16762]/D       -1.424        
+stage1_inp_reg[5607]/C         stage2_inp_reg[47352]/D        -1.422        
+stage12_inp_reg[17078]/C       stage13_inp_reg[23740]/D       -1.422        
+stage11_inp_reg[17281]/C       stage12_inp_reg[24335]/D       -1.422        
+stage1_inp_reg[23644]/C        stage2_inp_reg[44636]/D        -1.422        
+stage1_inp_reg[25006]/C        stage2_inp_reg[46982]/D        -1.421        
+stage1_inp_reg[25862]/C        stage2_inp_reg[44341]/D        -1.421        
+stage12_inp_reg[17078]/C       stage13_inp_reg[23742]/D       -1.421        
+stage12_inp_reg[20868]/C       stage13_inp_reg[19276]/D       -1.421        
+stage11_inp_reg[32017]/C       stage12_inp_reg[32014]/D       -1.419        
+stage11_inp_reg[32062]/C       stage12_inp_reg[8979]/D        -1.419        
+stage7_inp_reg[13014]/C        stage8_inp_reg[15218]/D        -1.418        
+stage0_inp_reg[7851]/C         stage10_inp_reg[188]_srl10/D   -1.418        
+stage9_inp_reg[13727]/C        stage10_inp_reg[18649]/D       -1.417        
+stage12_inp_reg[10236]/C       stage13_inp_reg[11455]/D       -1.417        
+stage1_inp_reg[36877]/C        stage2_inp_reg[42084]/D        -1.415        
+stage1_inp_reg[27810]/C        stage2_inp_reg[46875]/D        -1.415        
+stage12_inp_reg[24581]/C       stage13_inp_reg[16189]/D       -1.415        
+stage1_inp_reg[39438]/C        stage2_inp_reg[12302]/D        -1.414        
+stage7_inp_reg[18685]/C        stage8_inp_reg[17470]/D        -1.413        
+stage11_inp_reg[32017]/C       stage12_inp_reg[32015]/D       -1.411        
+stage1_inp_reg[29656]/C        stage2_inp_reg[15703]/D        -1.411        
+stage1_inp_reg[42933]/C        stage2_inp_reg[33277]/D        -1.411        
+stage12_inp_reg[10236]/C       stage13_inp_reg[11454]/D       -1.410        
+stage12_inp_reg[16184]/C       stage13_inp_reg[15367]/D       -1.410        
+stage12_inp_reg[14556]/C       stage13_inp_reg[18146]/D       -1.409        
+stage11_inp_reg[18619]/C       stage12_inp_reg[15622]/D       -1.409        
+stage9_inp_reg[11725]/C        stage10_inp_reg[31600]/D       -1.409        
+stage7_inp_reg[18632]/C        stage8_inp_reg[17438]/D        -1.407        
+
+
+

@@ -1,0 +1,1 @@
+{"cost": 666304.426, "flavor": "verilog", "part_name": "xcvu13p-flga2577-2-e", "adder_size": 1, "carry_size": 1, "latency": 20, "reg_bits": 404463, "clock_period": 5.0, "latency_cutoff": 4.922265625, "clock_uncertainty": 0.1, "io_delay_min": 0.2, "io_delay_max": 0.4}

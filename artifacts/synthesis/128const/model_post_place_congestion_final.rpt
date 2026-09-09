@@ -1,0 +1,34 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2026 Advanced Micro Devices, Inc. All Rights Reserved.
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version : Vivado v.2025.2.1 (lin64) Build 6403652 Thu Mar 19 13:47:00 MDT 2026
+| Date         : Wed Aug 19 13:59:24 2026
+| Host         : ccgpu5 running 64-bit Ubuntu 20.04.6 LTS
+| Command      : report_design_analysis -congestion -file /mnt/ccnas2/bdp/as8625/hgq-jetformer/experiment/E4_EMBED16_SEED42/models/alkaid/output_model/reports/model_post_place_congestion_final.rpt
+| Design       : model
+| Device       : xcvu13p
+| Design State : Routed
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Report Design Analysis
+
+Table of Contents
+-----------------
+1. Placer Final Level Congestion Reporting
+
+1. Placer Final Level Congestion Reporting
+------------------------------------------
+
++-----------+--------+-------+---------------------------------+---------------+----------------+-----+--------+------+------+------+------+-----+-------+-----+-------------+
+| Direction |  Type  | Level |              Window             | Combined LUTs | Avg LUT Inputs | LUT | LUTRAM | Flop | MUXF | RAMB | URAM | DSP | CARRY | SRL |  Cell Names |
++-----------+--------+-------+---------------------------------+---------------+----------------+-----+--------+------+------+------+------+-----+-------+-----+-------------+
+| North     | Global |     5 | (CLEL_R_X29Y109,CLEL_L_X44Y140) |           12% |          5.022 | 83% | 0%     |  18% |   0% | 0%   | NA   | 0%  |   13% |  6% | model(100%) |
+| North     | Global |     6 | (CLEL_R_X28Y98,CLEL_R_X58Y161)  |           11% |          4.985 | 83% | 0%     |  17% |   0% | 0%   | NA   | 0%  |   15% |  7% | model(100%) |
+| North     | Long   |     5 | (CLEM_X39Y114,CLEL_R_X53Y145)   |           11% |          4.858 | 82% | 0%     |  17% |   0% | NA   | NA   | 0%  |   14% | 10% | model(100%) |
+| North     | Long   |     6 | (CLEL_R_X29Y96,DSP_X59Y155)     |           11% |          4.974 | 83% | 0%     |  17% |   0% | 0%   | NA   | 0%  |   15% |  7% | model(100%) |
+| North     | Long   |     7 | (CLEL_R_X15Y71,BRAM_X76Y195)    |           10% |          4.875 | 84% | 0%     |  17% |   0% | 0%   | 0%   | 0%  |   21% |  6% | model(100%) |
+| South     | Long   |     5 | (CLEL_R_X51Y295,CLEL_R_X66Y326) |           12% |          3.057 | 50% | 0%     |  12% |   0% | 0%   | 0%   | 0%  |    5% |  0% | model(100%) |
+| South     | Long   |     6 | (CLEL_R_X38Y289,CLEM_X69Y352)   |           12% |          2.899 | 48% | 0%     |  12% |   0% | 0%   | 0%   | 0%  |    6% |  1% | model(100%) |
+| East      | Short  |     5 | (CLEL_R_X40Y88,CLEM_X55Y119)    |           11% |          5.111 | 84% | 0%     |  18% |   0% | NA   | NA   | 0%  |   12% |  6% | model(100%) |
++-----------+--------+-------+---------------------------------+---------------+----------------+-----+--------+------+------+------+------+-----+-------+-----+-------------+
+
+

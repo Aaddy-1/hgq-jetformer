@@ -1,0 +1,188 @@
+{
+  "configuration": {
+    "num_particles": 128,
+    "num_feats": 17,
+    "batch_size": 256,
+    "max_test_samples": 2000000,
+    "experiment": "E1_FLOORED_SEED42",
+    "quantize": true,
+    "dataset": "jetclass",
+    "calib_seed": 42,
+    "provenance": {
+      "hostname": "ccgpu5",
+      "cuda_visible_devices": "3",
+      "git_commit": "0949cc78404944b570717ad96f6a63ce8a2a6120",
+      "git_dirty": false,
+      "gpus": [
+        {
+          "name": "NVIDIA GeForce RTX 3090",
+          "compute_capability": "8.6"
+        }
+      ]
+    },
+    "training": null
+  },
+  "performance": {
+    "overall_accuracy": 0.7209985,
+    "per_class_metrics": {
+      "QCD": {
+        "accuracy": 0.66822,
+        "auc": 0.9329066957430556
+      },
+      "H_bb": {
+        "accuracy": 0.75374,
+        "auc": 0.9444291190125
+      },
+      "H_cc": {
+        "accuracy": 0.5836,
+        "auc": 0.8885612422805557
+      },
+      "H_gg": {
+        "accuracy": 0.6536,
+        "auc": 0.9347671637624999
+      },
+      "H_4q": {
+        "accuracy": 0.65728,
+        "auc": 0.9244189917930556
+      },
+      "H_qql": {
+        "accuracy": 0.923725,
+        "auc": 0.9636372222666666
+      },
+      "Z_qq": {
+        "accuracy": 0.59882,
+        "auc": 0.8705097858624999
+      },
+      "W_qq": {
+        "accuracy": 0.573375,
+        "auc": 0.9262470405944444
+      },
+      "t_bqq": {
+        "accuracy": 0.89236,
+        "auc": 0.9752837800319444
+      },
+      "t_bl": {
+        "accuracy": 0.905265,
+        "auc": 0.9931533648749999
+      }
+    }
+  },
+  "metadata": {
+    "ebops": 533746.0,
+    "best_epoch": 166,
+    "total_parameters": 285709,
+    "layers": [
+      {
+        "name": "input_particles",
+        "type": "InputLayer",
+        "output_shape": "(None, 128, 17)",
+        "params": 0
+      },
+      {
+        "name": "embedding_projection",
+        "type": "QDense",
+        "output_shape": "(None, 128, 32)",
+        "params": 8837
+      },
+      {
+        "name": "embedding_quantizer",
+        "type": "Quantizer",
+        "output_shape": "(None, 128, 32)",
+        "params": 12289
+      },
+      {
+        "name": "transformer_block_0_linformer_attn",
+        "type": "QLinformerAttention",
+        "output_shape": "(None, 128, 32)",
+        "params": 82592
+      },
+      {
+        "name": "transformer_block_0_attn_residual",
+        "type": "QAdd",
+        "output_shape": "(None, 128, 32)",
+        "params": 24580
+      },
+      {
+        "name": "transformer_block_0_ffn_expand",
+        "type": "QDense",
+        "output_shape": "(None, 128, 64)",
+        "params": 20484
+      },
+      {
+        "name": "transformer_block_0_ffn_lut_in_1",
+        "type": "Quantizer",
+        "output_shape": "(None, 128, 64)",
+        "params": 24577
+      },
+      {
+        "name": "transformer_block_0_ffn_lut_out_1",
+        "type": "Quantizer",
+        "output_shape": "(None, 128, 64)",
+        "params": 24577
+      },
+      {
+        "name": "transformer_block_0_ffn_contract",
+        "type": "QDense",
+        "output_shape": "(None, 128, 32)",
+        "params": 32772
+      },
+      {
+        "name": "transformer_block_0_ffn_lut_in_2",
+        "type": "Quantizer",
+        "output_shape": "(None, 128, 32)",
+        "params": 12289
+      },
+      {
+        "name": "transformer_block_0_ffn_lut_out_2",
+        "type": "Quantizer",
+        "output_shape": "(None, 128, 32)",
+        "params": 12289
+      },
+      {
+        "name": "transformer_block_0_ffn_residual",
+        "type": "QAdd",
+        "output_shape": "(None, 128, 32)",
+        "params": 24580
+      },
+      {
+        "name": "transformer_block_0_dropout",
+        "type": "Dropout",
+        "output_shape": "(None, 128, 32)",
+        "params": 0
+      },
+      {
+        "name": "linformer_pool",
+        "type": "GlobalAveragePooling1D",
+        "output_shape": "(None, 32)",
+        "params": 0
+      },
+      {
+        "name": "embed_dense",
+        "type": "QDense",
+        "output_shape": "(None, 32)",
+        "params": 4325
+      },
+      {
+        "name": "embed_dense_quantizer",
+        "type": "Quantizer",
+        "output_shape": "(None, 32)",
+        "params": 97
+      },
+      {
+        "name": "classifier_head",
+        "type": "QDense",
+        "output_shape": "(None, 10)",
+        "params": 1421
+      }
+    ],
+    "num_test_samples": 2000000,
+    "recovered_fields": {
+      "fields": [
+        "best_epoch",
+        "ebops"
+      ],
+      "source": "128_17f_loss_acc.npz: best_epochs[-1] and ebops[best_epochs[-1]]",
+      "reason": "post-training evaluation was run standalone, so the in-run values were never written"
+    }
+  }
+}

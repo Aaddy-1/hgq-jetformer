@@ -1,0 +1,29 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2026 Advanced Micro Devices, Inc. All Rights Reserved.
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version : Vivado v.2025.2.1 (lin64) Build 6403652 Thu Mar 19 13:47:00 MDT 2026
+| Date         : Fri Sep  4 22:39:58 2026
+| Host         : ccgpu4 running 64-bit Ubuntu 20.04.5 LTS
+| Command      : report_utilization -hierarchical -file /mnt/ccnas2/bdp/as8625/hgq-jetformer/experiment/C1_CROP64_SEED42/models/alkaid/output_model/reports/model_post_place_util.rpt
+| Design       : model
+| Device       : xcvu13p-flga2577-2-e
+| Speed File   : -2
+| Design State : Physopt postPlace
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Utilization Design Information
+
+Table of Contents
+-----------------
+1. Utilization by Hierarchy
+
+1. Utilization by Hierarchy
+---------------------------
+
++----------+--------+------------+------------+---------+-------+--------+--------+--------+------+------------+
+| Instance | Module | Total LUTs | Logic LUTs | LUTRAMs |  SRLs |   FFs  | RAMB36 | RAMB18 | URAM | DSP Blocks |
++----------+--------+------------+------------+---------+-------+--------+--------+--------+------+------------+
+| model    |  (top) |     453288 |     442878 |       0 | 10410 | 188033 |      0 |      0 |    0 |          8 |
++----------+--------+------------+------------+---------+-------+--------+--------+--------+------+------------+
+* Note: The sum of lower-level cells may be larger than their parent cells total, due to cross-hierarchy LUT combining
+
+

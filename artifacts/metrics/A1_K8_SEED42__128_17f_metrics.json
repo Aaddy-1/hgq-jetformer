@@ -1,0 +1,235 @@
+{
+    "configuration": {
+        "num_particles": 128,
+        "num_feats": 17,
+        "batch_size": 256,
+        "max_test_samples": 2000000,
+        "experiment": "A1_K8_SEED42",
+        "quantize": true,
+        "dataset": "jetclass",
+        "calib_seed": 42,
+        "provenance": {
+            "hostname": "ccgpu4",
+            "cuda_visible_devices": "3",
+            "git_commit": "ef79fdac6dac72a1afe0e21fe6a433bebb963aa8",
+            "git_dirty": false,
+            "gpus": [
+                {
+                    "name": "NVIDIA GeForce RTX 3090",
+                    "compute_capability": "8.6"
+                }
+            ]
+        },
+        "training": {
+            "in_dim": 17,
+            "embed_dim": 16,
+            "num_heads": 2,
+            "proj_dim_k": 8,
+            "num_classes": 10,
+            "num_transformers": 1,
+            "use_cls_token": false,
+            "floor_attn_datalane": true,
+            "use_linformer": true,
+            "dropout": 0.0,
+            "num_particles": 128,
+            "activation": "ReLU",
+            "normalization": "Batch",
+            "quantize": true,
+            "num_epochs": 600,
+            "batch_size": 256,
+            "early_stopping_patience": 150,
+            "experiment": "A1_K8_SEED42",
+            "dataset": "jetclass",
+            "max_samples": 2000000,
+            "max_test_samples": 2000000,
+            "augment_rotation": false,
+            "seed": 42,
+            "target_ebops": 350000.0,
+            "ebops_threshold": 360000.0,
+            "ebops_warmup_epoch": 75,
+            "save_final_epoch": true,
+            "use_adaptive_lr": false,
+            "provenance": {
+                "hostname": "ccgpu4",
+                "cuda_visible_devices": "3",
+                "git_commit": "ef79fdac6dac72a1afe0e21fe6a433bebb963aa8",
+                "git_dirty": false,
+                "gpus": [
+                    {
+                        "name": "NVIDIA GeForce RTX 3090",
+                        "compute_capability": "8.6"
+                    }
+                ]
+            }
+        }
+    },
+    "performance": {
+        "overall_accuracy": 0.5903445,
+        "per_class_metrics": {
+            "QCD": {
+                "accuracy": 0.613135,
+                "auc": 0.9109908293819443
+            },
+            "H_bb": {
+                "accuracy": 0.37018,
+                "auc": 0.8055906182083332
+            },
+            "H_cc": {
+                "accuracy": 0.370285,
+                "auc": 0.8002979282069445
+            },
+            "H_gg": {
+                "accuracy": 0.551265,
+                "auc": 0.9061839524888888
+            },
+            "H_4q": {
+                "accuracy": 0.43155,
+                "auc": 0.8632671292847223
+            },
+            "H_qql": {
+                "accuracy": 0.783555,
+                "auc": 0.9286760983305555
+            },
+            "Z_qq": {
+                "accuracy": 0.490265,
+                "auc": 0.8614980355097221
+            },
+            "W_qq": {
+                "accuracy": 0.57021,
+                "auc": 0.9225379507958333
+            },
+            "t_bqq": {
+                "accuracy": 0.851465,
+                "auc": 0.9623743886805556
+            },
+            "t_bl": {
+                "accuracy": 0.871535,
+                "auc": 0.986766167511111
+            }
+        }
+    },
+    "metadata": {
+        "ebops": 355392.0,
+        "best_epoch": 388,
+        "total_parameters": 150653,
+        "layers": [
+            {
+                "name": "input_particles",
+                "type": "InputLayer",
+                "output_shape": "(None, 128, 17)",
+                "params": 0
+            },
+            {
+                "name": "embedding_projection",
+                "type": "QDense",
+                "output_shape": "(None, 128, 16)",
+                "params": 7685
+            },
+            {
+                "name": "embedding_quantizer",
+                "type": "Quantizer",
+                "output_shape": "(None, 128, 16)",
+                "params": 6145
+            },
+            {
+                "name": "transformer_block_0_linformer_attn",
+                "type": "QLinformerAttention",
+                "output_shape": "(None, 128, 16)",
+                "params": 50912
+            },
+            {
+                "name": "transformer_block_0_attn_residual",
+                "type": "QAdd",
+                "output_shape": "(None, 128, 16)",
+                "params": 12292
+            },
+            {
+                "name": "transformer_block_0_ffn_expand",
+                "type": "QDense",
+                "output_shape": "(None, 128, 32)",
+                "params": 8196
+            },
+            {
+                "name": "transformer_block_0_ffn_lut_in_1",
+                "type": "Quantizer",
+                "output_shape": "(None, 128, 32)",
+                "params": 12289
+            },
+            {
+                "name": "transformer_block_0_ffn_lut_out_1",
+                "type": "Quantizer",
+                "output_shape": "(None, 128, 32)",
+                "params": 12289
+            },
+            {
+                "name": "transformer_block_0_ffn_contract",
+                "type": "QDense",
+                "output_shape": "(None, 128, 16)",
+                "params": 14340
+            },
+            {
+                "name": "transformer_block_0_ffn_lut_in_2",
+                "type": "Quantizer",
+                "output_shape": "(None, 128, 16)",
+                "params": 6145
+            },
+            {
+                "name": "transformer_block_0_ffn_lut_out_2",
+                "type": "Quantizer",
+                "output_shape": "(None, 128, 16)",
+                "params": 6145
+            },
+            {
+                "name": "transformer_block_0_ffn_residual",
+                "type": "QAdd",
+                "output_shape": "(None, 128, 16)",
+                "params": 12292
+            },
+            {
+                "name": "transformer_block_0_dropout",
+                "type": "Dropout",
+                "output_shape": "(None, 128, 16)",
+                "params": 0
+            },
+            {
+                "name": "linformer_pool",
+                "type": "GlobalAveragePooling1D",
+                "output_shape": "(None, 16)",
+                "params": 0
+            },
+            {
+                "name": "embed_dense",
+                "type": "QDense",
+                "output_shape": "(None, 16)",
+                "params": 1141
+            },
+            {
+                "name": "embed_dense_quantizer",
+                "type": "Quantizer",
+                "output_shape": "(None, 16)",
+                "params": 49
+            },
+            {
+                "name": "classifier_head",
+                "type": "QDense",
+                "output_shape": "(None, 10)",
+                "params": 733
+            }
+        ],
+        "num_test_samples": 2000000,
+        "artifacts": [
+            {
+                "path": "experiment/A1_K8_SEED42/models/quantized/128_17f.keras",
+                "kind": "gated_best",
+                "epoch": 388,
+                "ebops": 355392.0
+            },
+            {
+                "path": "experiment/A1_K8_SEED42/models/quantized/128_17f_final.keras",
+                "kind": "final_epoch",
+                "epoch": 538,
+                "ebops": 345295.0
+            }
+        ]
+    }
+}

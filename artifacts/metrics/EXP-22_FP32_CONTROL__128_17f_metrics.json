@@ -1,0 +1,148 @@
+{
+  "configuration": {
+    "num_particles": 128,
+    "num_feats": 17,
+    "batch_size": 256,
+    "max_test_samples": 20000000,
+    "experiment": "EXP-22_FP32_CONTROL",
+    "quantize": false,
+    "dataset": "jetclass"
+  },
+  "performance": {
+    "overall_accuracy": 0.7669,
+    "per_class_metrics": {
+      "QCD": {
+        "accuracy": 0.721727,
+        "auc": 0.9446331636807778
+      },
+      "H_bb": {
+        "accuracy": 0.796304,
+        "auc": 0.9508514879950973
+      },
+      "H_cc": {
+        "accuracy": 0.65237,
+        "auc": 0.8874090658163889
+      },
+      "H_gg": {
+        "accuracy": 0.6937625,
+        "auc": 0.9477941060394028
+      },
+      "H_4q": {
+        "accuracy": 0.749056,
+        "auc": 0.9491680554229722
+      },
+      "H_qql": {
+        "accuracy": 0.9430855,
+        "auc": 0.974114087394014
+      },
+      "Z_qq": {
+        "accuracy": 0.546801,
+        "auc": 0.8850678345373749
+      },
+      "W_qq": {
+        "accuracy": 0.7059725,
+        "auc": 0.9404229595882361
+      },
+      "t_bqq": {
+        "accuracy": 0.90832,
+        "auc": 0.9800292853830972
+      },
+      "t_bl": {
+        "accuracy": 0.9516015,
+        "auc": 0.9948672567031667
+      }
+    }
+  },
+  "metadata": {
+    "ebops": null,
+    "best_epoch": 135,
+    "total_parameters": 10794,
+    "layers": [
+      {
+        "name": "input_particles",
+        "type": "InputLayer",
+        "output_shape": "(None, 128, 17)",
+        "params": 0
+      },
+      {
+        "name": "embedding_projection",
+        "type": "Dense",
+        "output_shape": "(None, 128, 32)",
+        "params": 576
+      },
+      {
+        "name": "transformer_block_0_attn_norm",
+        "type": "BatchNormalization",
+        "output_shape": "(None, 128, 32)",
+        "params": 128
+      },
+      {
+        "name": "transformer_block_0_q_attention",
+        "type": "MultiHeadAttention",
+        "output_shape": "(None, 128, 32)",
+        "params": 4224
+      },
+      {
+        "name": "transformer_block_0_attn_residual",
+        "type": "Add",
+        "output_shape": "(None, 128, 32)",
+        "params": 0
+      },
+      {
+        "name": "transformer_block_0_ffn_norm1",
+        "type": "BatchNormalization",
+        "output_shape": "(None, 128, 32)",
+        "params": 128
+      },
+      {
+        "name": "transformer_block_0_ffn_expand",
+        "type": "Dense",
+        "output_shape": "(None, 128, 64)",
+        "params": 2048
+      },
+      {
+        "name": "transformer_block_0_ffn_norm2",
+        "type": "BatchNormalization",
+        "output_shape": "(None, 128, 64)",
+        "params": 256
+      },
+      {
+        "name": "transformer_block_0_ffn_contract",
+        "type": "Dense",
+        "output_shape": "(None, 128, 32)",
+        "params": 2048
+      },
+      {
+        "name": "transformer_block_0_ffn_residual",
+        "type": "Add",
+        "output_shape": "(None, 128, 32)",
+        "params": 0
+      },
+      {
+        "name": "transformer_block_0_dropout",
+        "type": "Dropout",
+        "output_shape": "(None, 128, 32)",
+        "params": 0
+      },
+      {
+        "name": "linformer_pool",
+        "type": "GlobalAveragePooling1D",
+        "output_shape": "(None, 32)",
+        "params": 0
+      },
+      {
+        "name": "embed_dense",
+        "type": "Dense",
+        "output_shape": "(None, 32)",
+        "params": 1056
+      },
+      {
+        "name": "classifier_head",
+        "type": "Dense",
+        "output_shape": "(None, 10)",
+        "params": 330
+      }
+    ],
+    "num_test_samples": 20000000
+  }
+}

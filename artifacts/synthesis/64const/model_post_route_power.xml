@@ -1,0 +1,74 @@
+<?xml version="1.0"?>
+<POWERDATA author="Vivado Power Analysis" dataVersion="2025.2.1" design="model" designState="routed" date="Sat Sep  5 00:25:45 2026" pwrOpt="None" activityLevel="vectorless">
+	<ENVIRONMENT>
+		<DEVICE part="xcvu13p" grade="extended" package="flga2577" speed="-2" process="typical" vid="No">
+		</DEVICE>
+		<VOLTAGESOURCES>
+			<SOURCE name="Vccbram" voltage="0.850000" icc="0.000000" iccq="0.047971" power="0.040775">
+			</SOURCE>
+			<SOURCE name="Vccint" voltage="0.850000" icc="57.779884" iccq="2.778055" power="51.474247">
+			</SOURCE>
+			<SOURCE name="Vccaux" voltage="1.800000" icc="0.000000" iccq="0.824491" power="1.484084">
+			</SOURCE>
+			<SOURCE name="Vccint_io" voltage="0.850000" icc="0.000000" iccq="0.163010" power="0.138558">
+			</SOURCE>
+			<SOURCE name="Vccaux_io" voltage="1.800000" icc="0.000000" iccq="0.104345" power="0.187822">
+			</SOURCE>
+			<SOURCE name="Vccadc" voltage="1.800000" icc="0.000000" iccq="0.032000" power="0.057600">
+			</SOURCE>
+		</VOLTAGESOURCES>
+		<THERMAL>
+			<AMBIENT value="25.000000">
+			</AMBIENT>
+			<AIRFLOW value="250.000000">
+			</AIRFLOW>
+			<HEATSINK value="medium (Medium Profile)">
+			</HEATSINK>
+			<BOARDSELECTION value="medium (10&quot;x10&quot;)">
+			</BOARDSELECTION>
+			<BOARDLAYERS value="12to15 (12 to 15 Layers)">
+			</BOARDLAYERS>
+			<TSA value="0.545000">
+			</TSA>
+			<TJB value="1.627000">
+			</TJB>
+			<BOARDTEMP value="25.0 (C)">
+			</BOARDTEMP>
+			<JUNCTION value="49.4 (C)">
+			</JUNCTION>
+		</THERMAL>
+	</ENVIRONMENT>
+	<BLOCKDETAILS>
+		<BYTYPE>
+			<BLOCKTYPE name="Clocks">
+				<CLOCK name="clk" freq="200.000000" belFanout="202752" sliceFanout="75252" FoPerSite="2.694307" sliceEnableRate="0.927784" leafs="0.000000" hrows="0.000000" power="1.516435">
+				</CLOCK>
+			</BLOCKTYPE>
+			<BLOCKTYPE name="LOGIC">
+				<LOGIC clock="Unclocked_or_HFN_instance" clockFreq="200.000000" clockFreq2="200.000000" toggleRate="115.546306" toggleRate2="45.842051" totalRate="77695221.965718" name="sys_clk" hierName="model" writeRate="0.000000" enableRate="0.000000" fanout="3.114513" ru="11.409318" fanout2="3.114515" totalFanout="1114734.000000" fanoutRate="119686357.145831" numNets="658377" extNets="357916" SMUX="523" carry8s="21485" luts="435643" logicCap="274167765209" signalCap="198803027.367695" power="18.043582" sp="15.607718">
+				</LOGIC>
+				<LOGIC clock="clk" clockFreq="200.000000" clockFreq2="200.000000" toggleRate="108.649178" toggleRate2="49.750667" totalRate="727951.760975" name="sys_clk" hierName="model" writeRate="0.000000" enableRate="1.000000" fanout="1.015992" ru="10.924592" fanout2="1.015992" totalFanout="14866.000000" fanoutRate="739293.762049" numNets="14632" extNets="14632" SRL="10410" logicCap="12158483164" signalCap="24450386.169342" power="0.679262" sp="0.879642">
+				</LOGIC>
+				<LOGIC clock="clk" clockFreq="200.000000" clockFreq2="200.000000" toggleRate="46.770228" toggleRate2="46.778243" totalRate="8417279.307418" name="sys_clk" hierName="model" writeRate="0.000000" enableRate="1.000000" fanout="3.000695" ru="12.810728" fanout2="3.000250" totalFanout="539477.000000" fanoutRate="24888077.574732" numNets="179968" extNets="179784" ffs="179898" logicCap="12549684801" signalCap="142493493.481384" power="0.424073" sp="4.786023">
+				</LOGIC>
+				<LOGIC clock="Unclocked_or_HFN_instance" clockFreq="200.000000" clockFreq2="117.364403" toggleRate="58.682202" toggleRate2="0.000000" totalRate="0.000000" name="Unassigned_Clock" hierName="model" writeRate="0.000000" enableRate="0.000000" fanout="0.000000" ru="0.000000" fanout2="0.000000" totalFanout="0.000000" fanoutRate="0.000000" numNets="0" extNets="0" luts="30" logicCap="15769599" signalCap="0.000000" power="0.000668" sp="0.000000">
+				</LOGIC>
+				<LOGIC clock="Unclocked_or_HFN_instance" clockFreq="200.000000" clockFreq2="94.390689" toggleRate="54.563134" toggleRate2="46.662364" totalRate="3998107.270276" name="High_Fanout_Nets" hierName="model" writeRate="0.000000" enableRate="1.000000" fanout="10.649694" ru="24.118117" fanout2="10.647325" totalFanout="836214.000000" fanoutRate="43912292.724325" numNets="78915" extNets="78520" SMUX="2" SRL="2" carry8s="7190" ffs="8135" luts="9022" logicCap="10576834452" signalCap="179538138.118484" power="0.369759" sp="6.781972">
+				</LOGIC>
+			</BLOCKTYPE>
+			<BLOCKTYPE name="DSP">
+				<MODULE name="model|clk" count="8">
+					<GROUPSUMMARY>
+						<DSP48E2 name="model|clk" clock="clk" toggleRate="53.832364" clockFreq="200.000000" multUsed="Yes" mregUsed="No" preAdderUsed="No" power="0.022782">
+						</DSP48E2>
+					</GROUPSUMMARY>
+				</MODULE>
+			</BLOCKTYPE>
+			<BLOCKTYPE name="IOBANK">
+				<IOBANK numInternalVref="0" numDelayControl="0" numLVDSBanks="0">
+				</IOBANK>
+			</BLOCKTYPE>
+		</BYTYPE>
+	</BLOCKDETAILS>
+</POWERDATA>
+

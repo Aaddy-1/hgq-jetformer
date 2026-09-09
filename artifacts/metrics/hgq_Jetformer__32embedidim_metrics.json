@@ -1,0 +1,157 @@
+{
+    "configuration": {
+        "in_dim": 3,
+        "embed_dim": 32,
+        "num_heads": 2,
+        "num_classes": 5,
+        "num_transformers": 1,
+        "dropout": 0.0,
+        "num_particles": 8,
+        "activation": "ReLU",
+        "normalization": "Batch",
+        "quantize": true,
+        "num_epochs": 1000,
+        "batch_size": 256,
+        "early_stopping_patience": 100
+    },
+    "performance": {
+        "overall_accuracy": 0.5674807692307692,
+        "per_class_metrics": {
+            "Gluon": {
+                "accuracy": 0.5793641706739944,
+                "auc": 0.7583003563785655
+            },
+            "Light_quarks": {
+                "accuracy": 0.516703653800428,
+                "auc": 0.8277027419947425
+            },
+            "W_boson": {
+                "accuracy": 0.6403560830860534,
+                "auc": 0.8099078791893073
+            },
+            "Z_boson": {
+                "accuracy": 0.3770698688286359,
+                "auc": 0.806898483921268
+            },
+            "Top_quark": {
+                "accuracy": 0.7213233197071965,
+                "auc": 0.902237532761796
+            }
+        }
+    },
+    "metadata": {
+        "ebops": 667729.0,
+        "best_epoch": 75,
+        "total_parameters": 54238,
+        "layers": [
+            {
+                "name": "input_particles",
+                "type": "InputLayer",
+                "output_shape": "(None, 8, 3)",
+                "params": 0
+            },
+            {
+                "name": "embedding_projection",
+                "type": "QDense",
+                "output_shape": "(None, 8, 32)",
+                "params": 589
+            },
+            {
+                "name": "embedding_quantizer",
+                "type": "Quantizer",
+                "output_shape": "(None, 8, 32)",
+                "params": 769
+            },
+            {
+                "name": "cls_token_weight",
+                "type": "Dense",
+                "output_shape": "(None, 1, 32)",
+                "params": 1056
+            },
+            {
+                "name": "cls_quantizer",
+                "type": "Quantizer",
+                "output_shape": "(None, 1, 32)",
+                "params": 97
+            },
+            {
+                "name": "cls_token_injection",
+                "type": "Concatenate",
+                "output_shape": "(None, 9, 32)",
+                "params": 0
+            },
+            {
+                "name": "transformer_block_0_q_attention",
+                "type": "QMultiHeadAttention",
+                "output_shape": "(None, 9, 32)",
+                "params": 23330
+            },
+            {
+                "name": "transformer_block_0_attn_residual",
+                "type": "QAdd",
+                "output_shape": "(None, 9, 32)",
+                "params": 1732
+            },
+            {
+                "name": "transformer_block_0_ffn_expand",
+                "type": "QDense",
+                "output_shape": "(None, 9, 64)",
+                "params": 9060
+            },
+            {
+                "name": "transformer_block_0_ffn_lut_in_1",
+                "type": "Quantizer",
+                "output_shape": "(None, 9, 64)",
+                "params": 1729
+            },
+            {
+                "name": "transformer_block_0_ffn_lut_out_1",
+                "type": "Quantizer",
+                "output_shape": "(None, 9, 64)",
+                "params": 1729
+            },
+            {
+                "name": "transformer_block_0_ffn_contract",
+                "type": "QDense",
+                "output_shape": "(None, 9, 32)",
+                "params": 9924
+            },
+            {
+                "name": "transformer_block_0_ffn_lut_in_2",
+                "type": "Quantizer",
+                "output_shape": "(None, 9, 32)",
+                "params": 865
+            },
+            {
+                "name": "transformer_block_0_ffn_lut_out_2",
+                "type": "Quantizer",
+                "output_shape": "(None, 9, 32)",
+                "params": 865
+            },
+            {
+                "name": "transformer_block_0_ffn_residual",
+                "type": "QAdd",
+                "output_shape": "(None, 9, 32)",
+                "params": 1732
+            },
+            {
+                "name": "transformer_block_0_dropout",
+                "type": "Dropout",
+                "output_shape": "(None, 9, 32)",
+                "params": 0
+            },
+            {
+                "name": "extract_cls",
+                "type": "Activation",
+                "output_shape": "(None, 32)",
+                "params": 0
+            },
+            {
+                "name": "classifier_head",
+                "type": "QDense",
+                "output_shape": "(None, 5)",
+                "params": 761
+            }
+        ]
+    }
+}

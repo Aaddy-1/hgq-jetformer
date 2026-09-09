@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<RptDoc cmdline="report_utilization -format xml -hierarchical -file /mnt/ccnas2/bdp/as8625/hgq-jetformer/experiment/C1_CROP64_SEED42/models/alkaid/output_model/reports/model_post_route_util.xml" designname="model" designstate="Routed" partname="xcvu13p-flga2577-2-e" speedfile="-2" title="Utilization Design Information" version="1">
+
+  <section class="" title="Utilization by Hierarchy">
+    <table class="" style="2" title="" useFootnoteNumbers="0">
+      <footnote text="Note: The sum of lower-level cells may be larger than their parent cells total, due to cross-hierarchy LUT combining"/>
+      <tablerow class="" suppressoutput="0" wordwrap="0">
+        <tableheader class="" contents="Instance" halign="3" width="-1"/>
+        <tableheader class="" contents="Module" halign="3" width="-1"/>
+        <tableheader class="" contents="Total LUTs" halign="3" width="-1"/>
+        <tableheader class="" contents="Logic LUTs" halign="3" width="-1"/>
+        <tableheader class="" contents="LUTRAMs" halign="3" width="-1"/>
+        <tableheader class="" contents="SRLs" halign="3" width="-1"/>
+        <tableheader class="" contents="FFs" halign="3" width="-1"/>
+        <tableheader class="" contents="RAMB36" halign="3" width="-1"/>
+        <tableheader class="" contents="RAMB18" halign="3" width="-1"/>
+        <tableheader class="" contents="URAM" halign="3" width="-1"/>
+        <tableheader class="" contents="DSP Blocks" halign="3" width="-1"/>
+      </tablerow>
+      <tablerow class="" suppressoutput="0" wordwrap="0">
+        <tablecell class="" contents="model" halign="1" type="string"/>
+        <tablecell class="" contents="(top)" halign="4" type="string"/>
+        <tablecell class="" contents="453288" halign="4" type="string"/>
+        <tablecell class="" contents="442878" halign="4" type="string"/>
+        <tablecell class="" contents="0" halign="4" type="string"/>
+        <tablecell class="" contents="10410" halign="4" type="string"/>
+        <tablecell class="" contents="188033" halign="4" type="string"/>
+        <tablecell class="" contents="0" halign="4" type="string"/>
+        <tablecell class="" contents="0" halign="4" type="string"/>
+        <tablecell class="" contents="0" halign="4" type="string"/>
+        <tablecell class="" contents="8" halign="4" type="string"/>
+      </tablerow>
+    </table>
+  </section>
+
+</RptDoc>

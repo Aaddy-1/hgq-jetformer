@@ -1,0 +1,166 @@
+{
+  "configuration": {
+    "num_particles": 128,
+    "num_feats": 17,
+    "batch_size": 256,
+    "max_test_samples": 20000000,
+    "experiment": "EXP-18_lowerwarmup_seed44",
+    "quantize": true,
+    "dataset": "jetclass"
+  },
+  "performance": {
+    "overall_accuracy": 0.7242913,
+    "per_class_metrics": {
+      "QCD": {
+        "accuracy": 0.7067385,
+        "auc": 0.9405443905944167
+      },
+      "H_bb": {
+        "accuracy": 0.7485045,
+        "auc": 0.9566591876848471
+      },
+      "H_cc": {
+        "accuracy": 0.5479505,
+        "auc": 0.8803943960235555
+      },
+      "H_gg": {
+        "accuracy": 0.595124,
+        "auc": 0.9401390737896389
+      },
+      "H_4q": {
+        "accuracy": 0.729863,
+        "auc": 0.9171019701319445
+      },
+      "H_qql": {
+        "accuracy": 0.9175355,
+        "auc": 0.9606286197525278
+      },
+      "Z_qq": {
+        "accuracy": 0.5480695,
+        "auc": 0.8885636598181668
+      },
+      "W_qq": {
+        "accuracy": 0.6292355,
+        "auc": 0.9349850989717916
+      },
+      "t_bqq": {
+        "accuracy": 0.890983,
+        "auc": 0.9788685271570694
+      },
+      "t_bl": {
+        "accuracy": 0.928909,
+        "auc": 0.9939127402230139
+      }
+    }
+  },
+  "metadata": {
+    "ebops": 365644.0,
+    "best_epoch": 417,
+    "total_parameters": 285709,
+    "layers": [
+      {
+        "name": "input_particles",
+        "type": "InputLayer",
+        "output_shape": "(None, 128, 17)",
+        "params": 0
+      },
+      {
+        "name": "embedding_projection",
+        "type": "QDense",
+        "output_shape": "(None, 128, 32)",
+        "params": 8837
+      },
+      {
+        "name": "embedding_quantizer",
+        "type": "Quantizer",
+        "output_shape": "(None, 128, 32)",
+        "params": 12289
+      },
+      {
+        "name": "transformer_block_0_linformer_attn",
+        "type": "QLinformerAttention",
+        "output_shape": "(None, 128, 32)",
+        "params": 82592
+      },
+      {
+        "name": "transformer_block_0_attn_residual",
+        "type": "QAdd",
+        "output_shape": "(None, 128, 32)",
+        "params": 24580
+      },
+      {
+        "name": "transformer_block_0_ffn_expand",
+        "type": "QDense",
+        "output_shape": "(None, 128, 64)",
+        "params": 20484
+      },
+      {
+        "name": "transformer_block_0_ffn_lut_in_1",
+        "type": "Quantizer",
+        "output_shape": "(None, 128, 64)",
+        "params": 24577
+      },
+      {
+        "name": "transformer_block_0_ffn_lut_out_1",
+        "type": "Quantizer",
+        "output_shape": "(None, 128, 64)",
+        "params": 24577
+      },
+      {
+        "name": "transformer_block_0_ffn_contract",
+        "type": "QDense",
+        "output_shape": "(None, 128, 32)",
+        "params": 32772
+      },
+      {
+        "name": "transformer_block_0_ffn_lut_in_2",
+        "type": "Quantizer",
+        "output_shape": "(None, 128, 32)",
+        "params": 12289
+      },
+      {
+        "name": "transformer_block_0_ffn_lut_out_2",
+        "type": "Quantizer",
+        "output_shape": "(None, 128, 32)",
+        "params": 12289
+      },
+      {
+        "name": "transformer_block_0_ffn_residual",
+        "type": "QAdd",
+        "output_shape": "(None, 128, 32)",
+        "params": 24580
+      },
+      {
+        "name": "transformer_block_0_dropout",
+        "type": "Dropout",
+        "output_shape": "(None, 128, 32)",
+        "params": 0
+      },
+      {
+        "name": "linformer_pool",
+        "type": "GlobalAveragePooling1D",
+        "output_shape": "(None, 32)",
+        "params": 0
+      },
+      {
+        "name": "embed_dense",
+        "type": "QDense",
+        "output_shape": "(None, 32)",
+        "params": 4325
+      },
+      {
+        "name": "embed_dense_quantizer",
+        "type": "Quantizer",
+        "output_shape": "(None, 32)",
+        "params": 97
+      },
+      {
+        "name": "classifier_head",
+        "type": "QDense",
+        "output_shape": "(None, 10)",
+        "params": 1421
+      }
+    ],
+    "num_test_samples": 20000000
+  }
+}

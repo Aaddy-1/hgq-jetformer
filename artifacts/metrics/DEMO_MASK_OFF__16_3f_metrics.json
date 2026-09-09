@@ -1,0 +1,218 @@
+{
+    "configuration": {
+        "num_particles": 16,
+        "num_feats": 3,
+        "batch_size": 256,
+        "max_test_samples": 2000000,
+        "experiment": "DEMO_MASK_OFF",
+        "quantize": true,
+        "dataset": "hls4ml",
+        "calib_seed": 42,
+        "provenance": {
+            "hostname": "ccgpu4",
+            "cuda_visible_devices": "2",
+            "git_commit": "a97db1ea2542e46eeecfb6d2bddce6aba732ee4d",
+            "git_dirty": true,
+            "gpus": [
+                {
+                    "name": "NVIDIA GeForce RTX 3090",
+                    "compute_capability": "8.6"
+                }
+            ]
+        },
+        "training": {
+            "in_dim": 3,
+            "embed_dim": 32,
+            "num_heads": 2,
+            "proj_dim_k": 2,
+            "num_classes": 5,
+            "num_transformers": 1,
+            "use_cls_token": false,
+            "floor_attn_datalane": false,
+            "use_linformer": true,
+            "rich_pool": false,
+            "head_width": null,
+            "mask_threshold": null,
+            "dropout": 0.0,
+            "num_particles": 16,
+            "activation": "ReLU",
+            "normalization": "Batch",
+            "quantize": true,
+            "num_epochs": 250,
+            "batch_size": 256,
+            "early_stopping_patience": 150,
+            "experiment": "DEMO_MASK_OFF",
+            "dataset": "hls4ml",
+            "max_samples": null,
+            "max_test_samples": 2000000,
+            "augment_rotation": false,
+            "seed": 42,
+            "target_ebops": 250000.0,
+            "ebops_threshold": 300000.0,
+            "ebops_warmup_epoch": 75,
+            "save_final_epoch": true,
+            "use_adaptive_lr": false,
+            "provenance": {
+                "hostname": "ccgpu4",
+                "cuda_visible_devices": "2",
+                "git_commit": "a97db1ea2542e46eeecfb6d2bddce6aba732ee4d",
+                "git_dirty": true,
+                "gpus": [
+                    {
+                        "name": "NVIDIA GeForce RTX 3090",
+                        "compute_capability": "8.6"
+                    }
+                ]
+            }
+        }
+    },
+    "performance": {
+        "overall_accuracy": 0.7107115384615385,
+        "per_class_metrics": {
+            "Gluon": {
+                "accuracy": 0.6309251202198305,
+                "auc": 0.8331224454889578
+            },
+            "Light_quarks": {
+                "accuracy": 0.6213838471902988,
+                "auc": 0.848039128238053
+            },
+            "W_boson": {
+                "accuracy": 0.7899109792284866,
+                "auc": 0.9269952040615062
+            },
+            "Z_boson": {
+                "accuracy": 0.7323607021301006,
+                "auc": 0.9051868042762364
+            },
+            "Top_quark": {
+                "accuracy": 0.7757391387013974,
+                "auc": 0.9278261004522225
+            }
+        }
+    },
+    "metadata": {
+        "ebops": 250408.0,
+        "best_epoch": 246,
+        "total_parameters": 69449,
+        "layers": [
+            {
+                "name": "input_particles",
+                "type": "InputLayer",
+                "output_shape": "(None, 16, 3)",
+                "params": 0
+            },
+            {
+                "name": "embedding_projection",
+                "type": "QDense",
+                "output_shape": "(None, 16, 32)",
+                "params": 661
+            },
+            {
+                "name": "embedding_quantizer",
+                "type": "Quantizer",
+                "output_shape": "(None, 16, 32)",
+                "params": 1537
+            },
+            {
+                "name": "transformer_block_0_linformer_attn",
+                "type": "QLinformerAttention",
+                "output_shape": "(None, 16, 32)",
+                "params": 25696
+            },
+            {
+                "name": "transformer_block_0_attn_residual",
+                "type": "QAdd",
+                "output_shape": "(None, 16, 32)",
+                "params": 3076
+            },
+            {
+                "name": "transformer_block_0_ffn_expand",
+                "type": "QDense",
+                "output_shape": "(None, 16, 64)",
+                "params": 9732
+            },
+            {
+                "name": "transformer_block_0_ffn_lut_in_1",
+                "type": "Quantizer",
+                "output_shape": "(None, 16, 64)",
+                "params": 3073
+            },
+            {
+                "name": "transformer_block_0_ffn_lut_out_1",
+                "type": "Quantizer",
+                "output_shape": "(None, 16, 64)",
+                "params": 3073
+            },
+            {
+                "name": "transformer_block_0_ffn_contract",
+                "type": "QDense",
+                "output_shape": "(None, 16, 32)",
+                "params": 11268
+            },
+            {
+                "name": "transformer_block_0_ffn_lut_in_2",
+                "type": "Quantizer",
+                "output_shape": "(None, 16, 32)",
+                "params": 1537
+            },
+            {
+                "name": "transformer_block_0_ffn_lut_out_2",
+                "type": "Quantizer",
+                "output_shape": "(None, 16, 32)",
+                "params": 1537
+            },
+            {
+                "name": "transformer_block_0_ffn_residual",
+                "type": "QAdd",
+                "output_shape": "(None, 16, 32)",
+                "params": 3076
+            },
+            {
+                "name": "transformer_block_0_dropout",
+                "type": "Dropout",
+                "output_shape": "(None, 16, 32)",
+                "params": 0
+            },
+            {
+                "name": "linformer_pool",
+                "type": "GlobalAveragePooling1D",
+                "output_shape": "(None, 32)",
+                "params": 0
+            },
+            {
+                "name": "embed_dense",
+                "type": "QDense",
+                "output_shape": "(None, 32)",
+                "params": 4325
+            },
+            {
+                "name": "embed_dense_quantizer",
+                "type": "Quantizer",
+                "output_shape": "(None, 32)",
+                "params": 97
+            },
+            {
+                "name": "classifier_head",
+                "type": "QDense",
+                "output_shape": "(None, 5)",
+                "params": 761
+            }
+        ],
+        "num_test_samples": 260000,
+        "artifacts": [
+            {
+                "path": "experiment/DEMO_MASK_OFF/models/quantized/16_3f.keras",
+                "kind": "gated_best",
+                "epoch": 246,
+                "ebops": 250408.0
+            },
+            {
+                "path": "experiment/DEMO_MASK_OFF/models/quantized/16_3f_final.keras",
+                "kind": "final_epoch",
+                "epoch": 249,
+                "ebops": 239079.0
+            }
+        ]
+    }
+}
