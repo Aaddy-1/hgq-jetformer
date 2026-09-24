@@ -75,7 +75,8 @@ def apply_hgq_transformer_block(
 
         import contextlib
 
-        # [ABLATION] mha_scope replaced by the datalane floor alone -- b unbound.
+        # [ABLATION] mha_scope restricted to the datalane (KIF) -- weight b unbound.
+        # bc has no target on KIF, so the floor is carried by ic/fc instead.
         # mha_scope = QuantizerConfigScope(
         #     k0=1, i0=1, f0=6,
         #     round_mode="RND",
@@ -83,7 +84,11 @@ def apply_hgq_transformer_block(
         #     bc=MinMax(1, 8),
         # )
         mha_scope = QuantizerConfigScope(
-            place="datalane", ic=MinMax(0, 23), fc=MinMax(1, 24)
+            place="datalane",
+            k0=1, i0=1, f0=6,
+            round_mode="RND",
+            overflow_mode="SAT",
+            ic=MinMax(0, 23), fc=MinMax(1, 24),
         )
 
         # The prune test is on the SUM k+i+f, and hgq.constraints offers no sum
