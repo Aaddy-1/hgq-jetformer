@@ -848,6 +848,7 @@ def train(
     use_linformer: bool = True,
     floor_attn_datalane: bool = False,
     ste_prune_mask: bool = False,
+    ffn_out_activation: bool = True,
     activation: str = "ReLU",
     normalization: str = "Batch",
     batch_size: int = 256,
@@ -961,6 +962,7 @@ def train(
             "use_cls_token": use_cls_token,
             "floor_attn_datalane": floor_attn_datalane,
             "ste_prune_mask": ste_prune_mask,
+            "ffn_out_activation": ffn_out_activation,
             "use_linformer": use_linformer,
             "dropout": dropout,
             "num_particles": num_particles,
@@ -1003,6 +1005,7 @@ def train(
             use_linformer=use_linformer,
             use_cls_token=use_cls_token,
             floor_attn_datalane=floor_attn_datalane,
+            ffn_out_activation=ffn_out_activation,
         )
 
         print("=================MODEL SUMMARY=================")
@@ -1212,6 +1215,20 @@ if __name__ == "__main__":
         "function while pruned channels keep a recoverable gradient "
         "(default: False).",
     )
+    # The FFN applies the activation after the contraction as well as after the
+    # expansion, so it can only add non-negative values to the residual stream.
+    # --no-ffn_out_activation drops that second activation and the two LUT
+    # quantizers around it; the residual QAdd's input quantizer then bounds the
+    # contraction output. Applies to the quantized and unquantized paths alike.
+    # Default True keeps existing behaviour byte-for-byte.
+    parser.add_argument(
+        "--ffn_out_activation",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Apply the activation (and its LUT quantizers) after the FFN "
+        "contraction (default: True). --no-ffn_out_activation feeds the "
+        "contraction straight into the residual add.",
+    )
     parser.add_argument(
         "--use_linformer",
         action=argparse.BooleanOptionalAction,
@@ -1336,6 +1353,7 @@ if __name__ == "__main__":
         use_cls_token=args.use_cls_token,
         floor_attn_datalane=args.floor_attn_datalane,
         ste_prune_mask=args.ste_prune_mask,
+        ffn_out_activation=args.ffn_out_activation,
         use_linformer=args.use_linformer,
         early_stopping_patience=args.early_stopping_patience,
         dropout=args.dropout,
