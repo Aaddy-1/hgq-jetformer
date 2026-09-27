@@ -55,6 +55,7 @@ def build_hgq_jetformer(
     use_cls_token=False,
     floor_attn_datalane=False,
     ffn_out_activation=True,
+    head_activation=False,
 ):
     # 1. Explicit Input Definition
     inputs = keras.Input(shape=(num_particles, in_dim), name="input_particles")
@@ -116,7 +117,7 @@ def build_hgq_jetformer(
     else:
         pooled = keras.layers.GlobalAveragePooling1D(name="linformer_pool")(x)
 
-    # 6. Dense Projection & Classifier Head
+    # 6. Dense Projection -> Activation (--head_activation) -> Classifier Head
     from .initializers import get_parity_initializer
 
     parity_initializer = get_parity_initializer()
@@ -127,6 +128,16 @@ def build_hgq_jetformer(
         kernel_initializer=parity_initializer,
         name="embed_dense",
     )(pooled)
+
+    # embed_dense and classifier_head are both linear, so with nothing between them
+    # they compose into one embed_dim -> num_classes map and embed_dense adds no
+    # capacity. With head_activation=True the head becomes a one-hidden-layer MLP.
+    # It runs once per jet rather than once per particle, and the activation itself
+    # carries no EBOPs. It sits before embed_dense_quantizer so that quantizer bounds
+    # the activation's output, as ffn_lut_out_1 does in the FFN. Default False is
+    # the original linear head.
+    if head_activation:
+        embed_dense = keras.activations.get(activation.lower())(embed_dense)
 
     if quantize:
         embed_dense = Quantizer(name="embed_dense_quantizer")(embed_dense)

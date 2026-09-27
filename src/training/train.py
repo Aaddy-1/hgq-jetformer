@@ -849,6 +849,7 @@ def train(
     floor_attn_datalane: bool = False,
     ste_prune_mask: bool = False,
     ffn_out_activation: bool = True,
+    head_activation: bool = False,
     activation: str = "ReLU",
     normalization: str = "Batch",
     batch_size: int = 256,
@@ -963,6 +964,7 @@ def train(
             "floor_attn_datalane": floor_attn_datalane,
             "ste_prune_mask": ste_prune_mask,
             "ffn_out_activation": ffn_out_activation,
+            "head_activation": head_activation,
             "use_linformer": use_linformer,
             "dropout": dropout,
             "num_particles": num_particles,
@@ -1006,6 +1008,7 @@ def train(
             use_cls_token=use_cls_token,
             floor_attn_datalane=floor_attn_datalane,
             ffn_out_activation=ffn_out_activation,
+            head_activation=head_activation,
         )
 
         print("=================MODEL SUMMARY=================")
@@ -1229,6 +1232,21 @@ if __name__ == "__main__":
         "contraction (default: True). --no-ffn_out_activation feeds the "
         "contraction straight into the residual add.",
     )
+    # Pooling and both head layers are linear, so embed_dense and classifier_head
+    # compose into a single map and every nonlinearity in the model sits before the
+    # pool. --head_activation applies the activation between embed_dense and
+    # classifier_head, making the head a one-hidden-layer MLP. It runs once per jet,
+    # so it costs almost nothing next to the per-particle layers. Applies to the
+    # quantized and unquantized paths alike. Default False keeps existing behaviour
+    # byte-for-byte.
+    parser.add_argument(
+        "--head_activation",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Apply the activation between embed_dense and classifier_head, so the "
+        "head is a one-hidden-layer MLP rather than two linear layers that compose "
+        "into one (default: False).",
+    )
     parser.add_argument(
         "--use_linformer",
         action=argparse.BooleanOptionalAction,
@@ -1354,6 +1372,7 @@ if __name__ == "__main__":
         floor_attn_datalane=args.floor_attn_datalane,
         ste_prune_mask=args.ste_prune_mask,
         ffn_out_activation=args.ffn_out_activation,
+        head_activation=args.head_activation,
         use_linformer=args.use_linformer,
         early_stopping_patience=args.early_stopping_patience,
         dropout=args.dropout,
