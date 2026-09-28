@@ -1,3 +1,6 @@
+# Modified from calad0i/JEDI-linear@48032802: get_gnn reads the input feature count and
+# class count from optional `n_features` / `n_classes` config keys. Without them the
+# graph is the upstream one. See LOCAL_CHANGES.md.
 from math import log2
 
 import keras
@@ -71,7 +74,7 @@ def get_mlp(conf):
 
 def get_gnn(conf, uq1: bool = False):
     N = conf.n_constituents
-    n = 3 if conf.pt_eta_phi else 16
+    n = conf.get('n_features', 3 if conf.pt_eta_phi else 16)
     heterogeneous_axis = None if not uq1 else (-1,)
 
     with (
@@ -105,7 +108,7 @@ def get_gnn(conf, uq1: bool = False):
         x = QEinsumDenseBatchnorm('bc,cC->bC', 64, bias_axes='C', activation='relu')(x)
         x = QEinsumDenseBatchnorm('bc,cC->bC', 32, bias_axes='C', activation='relu')(x)
         x = QEinsumDenseBatchnorm('bc,cC->bC', 16, bias_axes='C', activation='relu')(x)
-        out = QEinsumDenseBatchnorm('bc,cC->bC', 5, bias_axes='C')(x)
+        out = QEinsumDenseBatchnorm('bc,cC->bC', conf.get('n_classes', 5), bias_axes='C')(x)
 
     model = keras.Model(inputs=inp, outputs=out)
     return model
