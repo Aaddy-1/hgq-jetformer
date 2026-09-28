@@ -1,0 +1,10 @@
+da4ml
+h5py
+HGQ2
+jax
+keras
+matplotlib
+mplhep
+numpy
+omegaconf
+tqdm
