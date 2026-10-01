@@ -850,6 +850,7 @@ def train(
     ste_prune_mask: bool = False,
     ffn_out_activation: bool = True,
     head_activation: bool = False,
+    fused_bn: bool = False,
     activation: str = "ReLU",
     normalization: str = "Batch",
     batch_size: int = 256,
@@ -965,6 +966,7 @@ def train(
             "ste_prune_mask": ste_prune_mask,
             "ffn_out_activation": ffn_out_activation,
             "head_activation": head_activation,
+            "fused_bn": fused_bn,
             "use_linformer": use_linformer,
             "dropout": dropout,
             "num_particles": num_particles,
@@ -1009,6 +1011,7 @@ def train(
             floor_attn_datalane=floor_attn_datalane,
             ffn_out_activation=ffn_out_activation,
             head_activation=head_activation,
+            fused_bn=fused_bn,
         )
 
         print("=================MODEL SUMMARY=================")
@@ -1247,6 +1250,21 @@ if __name__ == "__main__":
         "head is a one-hidden-layer MLP rather than two linear layers that compose "
         "into one (default: False).",
     )
+    # The quantized path has no normalization: its QBatchNormalization layers are
+    # commented out in transformer.py and ffn.py. --fused_bn replaces every dense
+    # layer outside attention (embedding_projection, ffn_expand, ffn_contract,
+    # embed_dense, classifier_head) with hgq's QEinsumDenseBatchnorm, which folds
+    # BatchNorm on the layer's output into its kernel and bias, so hardware still
+    # sees one dense layer. The FFN layers gain the bias the fold requires. Attention
+    # internals are not normalized. Quantized path only; default False keeps
+    # existing behaviour byte-for-byte.
+    parser.add_argument(
+        "--fused_bn",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Fold BatchNorm into the five dense layers outside attention via "
+        "QEinsumDenseBatchnorm (quantized path only, default: False).",
+    )
     parser.add_argument(
         "--use_linformer",
         action=argparse.BooleanOptionalAction,
@@ -1373,6 +1391,7 @@ if __name__ == "__main__":
         ste_prune_mask=args.ste_prune_mask,
         ffn_out_activation=args.ffn_out_activation,
         head_activation=args.head_activation,
+        fused_bn=args.fused_bn,
         use_linformer=args.use_linformer,
         early_stopping_patience=args.early_stopping_patience,
         dropout=args.dropout,

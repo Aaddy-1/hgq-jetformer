@@ -1,7 +1,7 @@
 import keras
 from keras import ops
 from keras import layers
-from hgq.layers import QBatchNormalization, Quantizer, QDense
+from hgq.layers import QBatchNormalization, Quantizer, QDense, QEinsumDenseBatchnorm
 
 # Assuming imports from your architecture definitions:
 from .layers.embedding import apply_hgq_embedding
@@ -56,6 +56,7 @@ def build_hgq_jetformer(
     floor_attn_datalane=False,
     ffn_out_activation=True,
     head_activation=False,
+    fused_bn=False,
 ):
     # 1. Explicit Input Definition
     inputs = keras.Input(shape=(num_particles, in_dim), name="input_particles")
@@ -67,6 +68,7 @@ def build_hgq_jetformer(
         embedding_dim=embed_dim,
         quantize=quantize,
         prefix="embedding",
+        fused_bn=fused_bn,
     )
 
     # 3. Optional CLS Token Injection
@@ -108,6 +110,7 @@ def build_hgq_jetformer(
             block_name=f"transformer_block_{i}",
             floor_attn_datalane=floor_attn_datalane,
             ffn_out_activation=ffn_out_activation,
+            fused_bn=fused_bn,
         )
 
     # 5. Aggregation
@@ -123,11 +126,25 @@ def build_hgq_jetformer(
     parity_initializer = get_parity_initializer()
     dense_cls = QDense if quantize else keras.layers.Dense
 
-    embed_dense = dense_cls(
-        embed_dim,
-        kernel_initializer=parity_initializer,
-        name="embed_dense",
-    )(pooled)
+    def apply_head_dense(tensor, units, name):
+        # --fused_bn: BatchNorm on the dense output, folded into the kernel and bias
+        # (see layers/embedding.py). Applied to both head layers, logits included.
+        # Quantized path only.
+        if quantize and fused_bn:
+            return QEinsumDenseBatchnorm(
+                "bc,cC->bC",
+                units,
+                bias_axes="C",
+                kernel_initializer=parity_initializer,
+                name=name,
+            )(tensor)
+        return dense_cls(
+            units,
+            kernel_initializer=parity_initializer,
+            name=name,
+        )(tensor)
+
+    embed_dense = apply_head_dense(pooled, embed_dim, "embed_dense")
 
     # embed_dense and classifier_head are both linear, so with nothing between them
     # they compose into one embed_dim -> num_classes map and embed_dense adds no
@@ -142,11 +159,7 @@ def build_hgq_jetformer(
     if quantize:
         embed_dense = Quantizer(name="embed_dense_quantizer")(embed_dense)
 
-    logits = dense_cls(
-        num_classes,
-        kernel_initializer=parity_initializer,
-        name="classifier_head",
-    )(embed_dense)
+    logits = apply_head_dense(embed_dense, num_classes, "classifier_head")
 
     # 7. Compile Static Graph
     return keras.Model(inputs=inputs, outputs=logits, name="HGQJetFormer")

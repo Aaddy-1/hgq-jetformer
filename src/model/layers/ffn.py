@@ -1,5 +1,5 @@
 import keras
-from hgq.layers import QDense, QBatchNormalization, Quantizer
+from hgq.layers import QDense, QBatchNormalization, QEinsumDenseBatchnorm, Quantizer
 
 
 def apply_hgq_feed_forward(
@@ -13,6 +13,7 @@ def apply_hgq_feed_forward(
     prefix="ffn",
     training=False,
     out_activation=True,
+    fused_bn=False,
 ):
     hidden_dim = in_dim * multiplication
     dense_cls = QDense if quantize else keras.layers.Dense
@@ -38,14 +39,28 @@ def apply_hgq_feed_forward(
             # )(tensor, training=training)
             return tensor
 
+    def apply_dense(tensor, units, name):
+        # --fused_bn: BatchNorm on the dense output, folded into the kernel and bias
+        # (see embedding.py). The fused layer needs a bias to carry the BatchNorm
+        # shift, so it gains one where the plain dense has none. Quantized path only.
+        if quantize and fused_bn:
+            return QEinsumDenseBatchnorm(
+                "bnc,cC->bnC",
+                (tensor.shape[1], units),
+                bias_axes="C",
+                kernel_initializer=parity_initializer,
+                name=name,
+            )(tensor)
+        return dense_cls(
+            units,
+            use_bias=False,
+            kernel_initializer=parity_initializer,
+            name=name,
+        )(tensor)
+
     # Block 1: Norm -> Linear (Expansion) -> Activation
     x = apply_norm(x, "norm1")
-    x = dense_cls(
-        hidden_dim,
-        use_bias=False,
-        kernel_initializer=parity_initializer,
-        name=f"{prefix}_expand",
-    )(x)
+    x = apply_dense(x, hidden_dim, f"{prefix}_expand")
 
     if quantize:
         x = Quantizer(name=f"{prefix}_lut_in_1")(x)  # Bounds the LUT Address Space
@@ -57,12 +72,7 @@ def apply_hgq_feed_forward(
 
     # Block 2: Norm -> Linear (Contraction) -> Activation (--ffn_out_activation)
     x = apply_norm(x, "norm2")
-    x = dense_cls(
-        in_dim,
-        use_bias=False,
-        kernel_initializer=parity_initializer,
-        name=f"{prefix}_contract",
-    )(x)
+    x = apply_dense(x, in_dim, f"{prefix}_contract")
 
     # With out_activation=False the contraction feeds the residual QAdd directly,
     # and the QAdd's own input quantizer bounds it, as attn_residual already does

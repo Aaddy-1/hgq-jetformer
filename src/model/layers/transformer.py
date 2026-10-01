@@ -29,6 +29,7 @@ def apply_hgq_transformer_block(
     training=False,
     floor_attn_datalane=False,
     ffn_out_activation=True,
+    fused_bn=False,
 ):
     latent_dim = latent_dim if latent_dim is not None else in_dim
     head_dim = latent_dim // num_heads
@@ -153,6 +154,7 @@ def apply_hgq_transformer_block(
         prefix=f"{block_name}_ffn",
         training=training,
         out_activation=ffn_out_activation,
+        fused_bn=fused_bn,
     )
 
 
