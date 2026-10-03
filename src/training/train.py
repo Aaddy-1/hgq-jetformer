@@ -847,9 +847,9 @@ def train(
     use_cls_token: bool = False,
     use_linformer: bool = True,
     floor_attn_datalane: bool = False,
-    ste_prune_mask: bool = False,
+    ste_prune_mask: bool = True,
     ffn_out_activation: bool = True,
-    head_activation: bool = False,
+    head_activation: bool = True,
     fused_bn: bool = False,
     activation: str = "ReLU",
     normalization: str = "Batch",
@@ -1211,27 +1211,27 @@ if __name__ == "__main__":
     # a pruned channel keeps the gradient that lets its bit-width recover; a hard
     # gate would make k+i+f <= 0 absorbing. Unlike --floor_attn_datalane, which
     # forbids pruning and pays the EBOPs, this permits it and makes the optimizer
-    # face the consequence. Default False keeps existing behaviour byte-for-byte.
+    # face the consequence. Default True since 2026-10-03: part of the flagship
+    # (head ReLU + STE); --no-ste_prune_mask restores the old behaviour.
     parser.add_argument(
         "--ste_prune_mask",
         action=argparse.BooleanOptionalAction,
-        default=False,
+        default=True,
         help="Apply HGQ's zero-bit prune mask during training behind a "
         "straight-through estimator, so training and inference score the same "
         "function while pruned channels keep a recoverable gradient "
-        "(default: False).",
+        "(default: True).",
     )
     # The FFN applies the activation after the contraction as well as after the
     # expansion, so it can only add non-negative values to the residual stream.
-    # --no-ffn_out_activation drops that second activation and the two LUT
-    # quantizers around it; the residual QAdd's input quantizer then bounds the
-    # contraction output. Applies to the quantized and unquantized paths alike.
-    # Default True keeps existing behaviour byte-for-byte.
+    # --no-ffn_out_activation drops that second activation; the residual QAdd's
+    # input quantizer bounds the FFN output either way. Applies to the quantized
+    # and unquantized paths alike. Default True keeps existing behaviour.
     parser.add_argument(
         "--ffn_out_activation",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Apply the activation (and its LUT quantizers) after the FFN "
+        help="Apply the activation after the FFN "
         "contraction (default: True). --no-ffn_out_activation feeds the "
         "contraction straight into the residual add.",
     )
@@ -1240,15 +1240,15 @@ if __name__ == "__main__":
     # pool. --head_activation applies the activation between embed_dense and
     # classifier_head, making the head a one-hidden-layer MLP. It runs once per jet,
     # so it costs almost nothing next to the per-particle layers. Applies to the
-    # quantized and unquantized paths alike. Default False keeps existing behaviour
-    # byte-for-byte.
+    # quantized and unquantized paths alike. Default True since 2026-10-03: part of
+    # the flagship (head ReLU + STE); --no-head_activation restores the linear head.
     parser.add_argument(
         "--head_activation",
         action=argparse.BooleanOptionalAction,
-        default=False,
+        default=True,
         help="Apply the activation between embed_dense and classifier_head, so the "
         "head is a one-hidden-layer MLP rather than two linear layers that compose "
-        "into one (default: False).",
+        "into one (default: True).",
     )
     # The quantized path has no normalization: its QBatchNormalization layers are
     # commented out in transformer.py and ffn.py. --fused_bn replaces every dense

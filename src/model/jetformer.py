@@ -150,14 +150,16 @@ def build_hgq_jetformer(
     # they compose into one embed_dim -> num_classes map and embed_dense adds no
     # capacity. With head_activation=True the head becomes a one-hidden-layer MLP.
     # It runs once per jet rather than once per particle, and the activation itself
-    # carries no EBOPs. It sits before embed_dense_quantizer so that quantizer bounds
-    # the activation's output, as ffn_lut_out_1 does in the FFN. Default False is
-    # the original linear head.
+    # carries no EBOPs. classifier_head's own input quantizer bounds the
+    # activation's output. Default False is the original linear head.
     if head_activation:
         embed_dense = keras.activations.get(activation.lower())(embed_dense)
 
-    if quantize:
-        embed_dense = Quantizer(name="embed_dense_quantizer")(embed_dense)
+    # [CLEAN] Commented out: classifier_head quantizes its input itself
+    # (enable_iq=True), so this was a second rounding of the same tensor.
+    # See .agents/analysis/size_gap_research_2026-10-01/C_audit.md E4.
+    # if quantize:
+    #     embed_dense = Quantizer(name="embed_dense_quantizer")(embed_dense)
 
     logits = apply_head_dense(embed_dense, num_classes, "classifier_head")
 

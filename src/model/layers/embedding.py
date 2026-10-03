@@ -30,7 +30,11 @@ def apply_hgq_embedding(
             name=f"{prefix}_projection",
         )(x)
 
-    if quantize:
-        x = Quantizer(name=f"{prefix}_quantizer")(x)
+    # [CLEAN] Commented out: every consumer quantizes this tensor itself -- the
+    # attention's input quantizers (query, lin_k_proj, lin_v_proj) and
+    # attn_residual's skip input -- so this was a second rounding in front of each.
+    # See .agents/analysis/size_gap_research_2026-10-01/C_audit.md E4.
+    # if quantize:
+    #     x = Quantizer(name=f"{prefix}_quantizer")(x)
 
     return x

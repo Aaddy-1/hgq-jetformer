@@ -62,29 +62,35 @@ def apply_hgq_feed_forward(
     x = apply_norm(x, "norm1")
     x = apply_dense(x, hidden_dim, f"{prefix}_expand")
 
-    if quantize:
-        x = Quantizer(name=f"{prefix}_lut_in_1")(x)  # Bounds the LUT Address Space
+    # [CLEAN] The LUT quantizers around each ReLU are commented out. ffn_contract's
+    # own input quantizer (enable_iq=True) quantizes the activation's output, so
+    # lut_in -> ReLU -> lut_out -> contract.iq rounded the same tensor three times.
+    # ReLU is a native op in da4ml, not a table, so there is no LUT space to bound.
+    # See .agents/analysis/size_gap_research_2026-10-01/C_audit.md E4.
+    # if quantize:
+    #     x = Quantizer(name=f"{prefix}_lut_in_1")(x)  # Bounds the LUT Address Space
 
     x = activation_fn(x)
 
-    if quantize:
-        x = Quantizer(name=f"{prefix}_lut_out_1")(x)  # Bounds the LUT Value Space
+    # if quantize:
+    #     x = Quantizer(name=f"{prefix}_lut_out_1")(x)  # Bounds the LUT Value Space
 
     # Block 2: Norm -> Linear (Contraction) -> Activation (--ffn_out_activation)
     x = apply_norm(x, "norm2")
     x = apply_dense(x, in_dim, f"{prefix}_contract")
 
-    # With out_activation=False the contraction feeds the residual QAdd directly,
-    # and the QAdd's own input quantizer bounds it, as attn_residual already does
-    # for the attention output. The two LUT quantizers exist only to wrap the
-    # activation, so they are skipped with it. Default True is the original FFN.
+    # The FFN output feeds the residual QAdd, whose own input quantizer bounds it
+    # (as attn_residual does for the attention output), with or without the
+    # activation. Default True is the original FFN.
     if out_activation:
-        if quantize:
-            x = Quantizer(name=f"{prefix}_lut_in_2")(x)  # Bounds the LUT Address Space
+        # [CLEAN] Commented out for the same reason as lut_in_1 / lut_out_1:
+        # ffn_residual's branch input quantizer quantizes the activation's output.
+        # if quantize:
+        #     x = Quantizer(name=f"{prefix}_lut_in_2")(x)  # Bounds the LUT Address Space
 
         x = activation_fn(x)
 
-        if quantize:
-            x = Quantizer(name=f"{prefix}_lut_out_2")(x)  # Bounds the LUT Value Space
+        # if quantize:
+        #     x = Quantizer(name=f"{prefix}_lut_out_2")(x)  # Bounds the LUT Value Space
 
     return x
