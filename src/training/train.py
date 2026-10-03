@@ -832,6 +832,71 @@ def run_post_training_pipeline(
         train_config=config,
     )
 
+    if quantize and model_path and os.path.exists(model_path):
+        report_uncalibrated_accuracy(config, model_path, eval_results_path)
+
+
+def report_uncalibrated_accuracy(config: dict, model_path: str, eval_results_path: str):
+    """Score the saved checkpoint without calibration and report that accuracy.
+
+    evaluate.py runs trace_minmax on the in-memory model before scoring, but the
+    calibrated model is never saved, so Alkaid compiles the checkpoint as saved.
+    This re-scores that checkpoint with `evaluate.py --no-quantize`, which skips
+    only the calibration block, and moves its performance into the metrics JSON.
+    The calibrated figures are kept under performance_calibrated.
+
+    It runs as a separate process on CPU: in-process on GPU the uncalibrated
+    predict fails with XLA "Expect autotune result cache hit" (2026-10-02), while
+    the CPU route scored every checkpoint it was given. Never raises: on any
+    failure the metrics keep the calibrated accuracy.
+    """
+    import subprocess
+    import sys
+
+    experiment = config.get("experiment")
+    num_particles = config.get("num_particles", 128)
+    num_feats = config.get("in_dim", 17)
+    cmd = [
+        sys.executable, "-m", "src.training.evaluate",
+        "--dataset", str(config.get("dataset", "jetclass")),
+        "--num_particles", str(num_particles),
+        "--num_feats", str(num_feats),
+        "--batch_size", str(config.get("batch_size", 256)),
+        "--max_test_samples", str(config.get("max_test_samples", 2000000)),
+        "--no-quantize",
+        "--model_path", model_path,
+    ]
+    if experiment:
+        cmd += ["--experiment", experiment]
+
+    print("\n[Post-Training] Scoring the saved checkpoint without calibration (CPU)...")
+    try:
+        subprocess.run(
+            cmd, cwd=PROJECT_ROOT, env={**os.environ, "CUDA_VISIBLE_DEVICES": ""}, check=True
+        )
+        _, uncal_dir = resolve_experiment_paths(experiment, quantize=False)
+        uncal_path = os.path.join(uncal_dir, f"{num_particles}_{num_feats}f_metrics.json")
+        with open(uncal_path) as f:
+            uncal = json.load(f)
+        with open(eval_results_path) as f:
+            metrics = json.load(f)
+        metrics["performance_calibrated"] = metrics["performance"]
+        metrics["performance"] = uncal["performance"]
+        metrics["metadata"]["reported_performance"] = "uncalibrated"
+        with open(eval_results_path, "w") as f:
+            json.dump(metrics, f, indent=4)
+        print(
+            f"[Post-Training] Test accuracy, uncalibrated (reported): "
+            f"{metrics['performance']['overall_accuracy']:.5f} | calibrated: "
+            f"{metrics['performance_calibrated']['overall_accuracy']:.5f}"
+        )
+        print(f"[Post-Training] Metrics updated: {eval_results_path}")
+    except Exception as e:
+        print(
+            f"[Post-Training] WARNING: uncalibrated scoring failed ({e}). "
+            f"{eval_results_path} keeps the calibrated accuracy."
+        )
+
 
 def train(
     num_particles: int = 16,
